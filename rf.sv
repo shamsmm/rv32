@@ -4,6 +4,8 @@ module rf(
     input logic [11:7] rd,
     input logic wr,
     input logic [31:0] wrdata,
+    input logic clk,
+    input logic rst_n,
     output logic [31:0] r1,
     output logic [31:0] r2
 );
