@@ -21,7 +21,7 @@ typedef struct packed {
     bit [14:12] funct3;
     bit [19:15] rs1;
     bit [24:20] rs2;
-    bit [31:25] immb11_5;
+    bit [31:25] imm_b11_5;
 } stype;
 
 typedef struct packed {

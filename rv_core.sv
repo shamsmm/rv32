@@ -41,6 +41,14 @@ logic [31:0] rf_rs1, rf_rs2, rf_rd, rf_wr, rf_wrdata, rf_r1, rf_r2;
 
 logic branch;
 
+logic mem_wr;
+logic mem_rd;
+logic mem_addr;
+logic [31:0] mem_wrdata;
+logic mem_r;
+logic [31:0] mem_rdata;
+bus_if.tsize_t tsize;
+
 always_comb begin
     opcode = instruction[6:0];
 
@@ -51,7 +59,25 @@ always_comb begin
         case(opcode[6:5])
             2'b00:
                 case(opcode[4:2])
-                    3'b000: ; // LOAD
+                    3'b000: begin // LOAD
+                        rf_rd = itype_i.rd;
+                        rf_rs1 = itype_i.rs1;
+                         
+                        rf_wr = 1'b1;
+                        
+                        tsize = bus_if.tsize_t'(itype_i.funct3[14:12]); // by ISA
+
+                        case(itype_i.funct3)
+                            3'b000: rf_wrdata = {{24{mem_rdata[7]}}, mem_rdata[7:0]}; // LB
+                            3'b001: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LH
+                            3'b010: rf_wrdata = mem_rdata; // LW
+                            3'b100: rf_wrdata = {{24{0}}, mem_rdata[7:0]}; // LBU
+                            3'b101: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LHU
+                        endcase
+
+                        mem_rd = 1'b1;
+                        mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
+                    end
                     3'b001: ; // LOAD-FP
                     3'b010: ; // custom-0
                     3'b011: ; // MISC-MEM
@@ -77,7 +103,14 @@ always_comb begin
             2'b01:
                 case(opcode[4:2])
                     3'b000: begin // STORE
-                        
+                        rf_rs1 = stype_i.rs1;
+                        rf_rs2 = stype_i.rs2;
+    
+                        mem_wr = 1'b1;
+                        mem_addr = rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
+                        mem_wrdata = rf_r2; // will be trimmed
+
+                        tsize = bus_if.tsize_t'(stype_i.funct3[14:12]);
                     end
                     3'b001: ; // STORE-FP
                     3'b010: ; // custom-1

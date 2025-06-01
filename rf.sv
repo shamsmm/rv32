@@ -10,17 +10,17 @@ module rf(
     output logic [31:0] r2
 );
 
-logic [31:0][0:31] data;
+logic [31:0][1:31] data;
 
-assign r1 = data[rs1];
-assign r2 = data[rs2];
+assign r1 = rs1 == 0 ? 0 : data[rs1];
+assign r2 = rs2 == 0 ? 0 : data[rs2];
 
 always_ff @(posedge clk or negedge rst_n)
     if (!rst_n)
-        for(int i = 0; i < 32; i++)
+        for(int i = 1; i < 32; i++)
             data[i] <= 0;
     else
-        if (wr)
+        if (wr && rd != 0)
             data[rd] <= wrdata;
 
 endmodule

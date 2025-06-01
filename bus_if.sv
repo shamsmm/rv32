@@ -1,6 +1,6 @@
 interface bus_if(input clk, input rst_n);
 
-typedef enum {
+typedef enum logic [1:0] {
     BYTE = 0,
     HALFWORD = 1,
     WORD = 2
