@@ -1,4 +1,4 @@
-module alu(input logic [31:0] in1, [31:0] in2, [4:0] shamt, input logic use_shamt, output logic[31:0] out, carry, negative, zero, input [14:12] funct3, [31:20] funct7);
+module alu(input logic [31:0] in1, [31:0] in2, [4:0] shamt, input logic use_shamt, output logic[31:0] out, carry, negative, zero, overflow, input [14:12] funct3, [31:20] funct7);
 
 assign negative = out[31];
 assign zero = out == 0;

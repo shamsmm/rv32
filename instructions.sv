@@ -45,7 +45,7 @@ typedef struct packed {
     bit [6:0] opcode;
     bit [11:7] rd;
     bit [19:12] imm_b19_12;
-    bit imm_11;
+    bit imm_b11;
     bit [30:21] imm_b10_1;
     bit imm_b20;
 } jtype;
