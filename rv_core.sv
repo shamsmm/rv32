@@ -1,4 +1,23 @@
-module rv_core(master_bus_if.master fabric, input clk, input rst_n);
+`include "bus_if.svh"
+`include "instructions.svh"
+
+module rv_core(master_bus_if.master dbus, master_bus_if.master ibus, input clk, input rst_n);
+
+localparam bit [31:0] NOP = 0;
+
+always_comb begin
+    ibus.ttype = READ;
+    ibus.tsize = WORD;
+    ibus.bstart = 1'b1;
+end
+
+always_ff @(posedge clk) begin
+    if (!ibus.berror && ibus.bgnt && ibus.bdone)
+        instruction <= ibus.rdata;
+    else
+        instruction <= NOP;
+end
+
 
 logic [31:0] pc, next_pc;
 
@@ -50,6 +69,25 @@ logic [31:0] mem_rdata;
 tsize_e tsize;
 
 always_comb begin
+    dbus.wdata = mem_wrdata;
+    dbus.addr = mem_addr;
+    mem_rdata = dbus.rdata;
+end
+
+always_ff @(posedge clk) begin
+    if (mem_wr) begin
+        dbus.bstart <= 1'b1;
+        dbus.ttype <= WRITE;
+    end else if (mem_rd) begin
+        dbus.bstart <= 1'b1;
+        dbus.ttype <= READ;
+    end else begin
+        dbus.bstart <= 1'b0;
+    end
+end
+
+
+always_comb begin
     opcode = instruction[6:0];
 
     next_pc = pc + 4;
@@ -65,7 +103,7 @@ always_comb begin
                          
                         rf_wr = 1'b1;
                         
-                        tsize = bus_if.tsize_t'(itype_i.funct3[14:12]); // by ISA
+                        tsize = tsize_e'(itype_i.funct3[14:12]); // by ISA
 
                         case(itype_i.funct3)
                             3'b000: rf_wrdata = {{24{mem_rdata[7]}}, mem_rdata[7:0]}; // LB
@@ -110,7 +148,7 @@ always_comb begin
                         mem_addr = rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
                         mem_wrdata = rf_r2; // will be trimmed
 
-                        tsize = bus_if.tsize_t'(stype_i.funct3[14:12]);
+                        tsize = tsize_e'(stype_i.funct3[14:12]);
                     end
                     3'b001: ; // STORE-FP
                     3'b010: ; // custom-1
@@ -143,7 +181,7 @@ always_comb begin
                     3'b101: ; // reserved
                     3'b110: ; // custom-2/RV128
                 endcase
-            2'b10:
+            2'b11:
                 case(opcode[4:2])
                     3'b000: begin // BRANCH
                         branch = 0;

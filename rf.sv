@@ -10,7 +10,7 @@ module rf(
     output logic [31:0] r2
 );
 
-logic [31:0][1:31] data;
+logic [31:0][31:1] data;
 
 assign r1 = rs1 == 0 ? 0 : data[rs1];
 assign r2 = rs2 == 0 ? 0 : data[rs2];
