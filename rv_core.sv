@@ -1,25 +1,38 @@
 `include "bus_if.svh"
 `include "instructions.svh"
 
-module rv_core(master_bus_if.master dbus, master_bus_if.master ibus, input clk, input rst_n);
+module  rv_core #(parameter logic [31:0] INITIAL_PC) (
+    master_bus_if.master dbus,
+    master_bus_if.master ibus,
+    input clk,
+    input rst_n
+);
 
 localparam bit [31:0] NOP = 0;
 
+logic [31:0] pc, next_pc;
+
 always_comb begin
+    ibus.breq = 1'b1;
     ibus.ttype = READ;
     ibus.tsize = WORD;
     ibus.bstart = 1'b1;
+    ibus.addr = pc;
+end
+
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        pc <= INITIAL_PC;
+    else
+        pc <= next_pc;
 end
 
 always_ff @(posedge clk) begin
     if (!ibus.berror && ibus.bgnt && ibus.bdone)
         instruction <= ibus.rdata;
-    else
+    else if (dbus.bdone) // prevent changing state untill data was written back in rf or in memory
         instruction <= NOP;
 end
-
-
-logic [31:0] pc, next_pc;
 
 // IF
 logic [31:0] instruction;
