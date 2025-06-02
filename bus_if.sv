@@ -1,16 +1,51 @@
-interface bus_if(input clk, input rst_n);
-
 typedef enum logic [1:0] {
     BYTE = 0,
     HALFWORD = 1,
     WORD = 2
-} tsize_t; // transaction size
+} tsize_e;
 
-logic [31:0] wdata, rdata;
-logic [31:0] addr;
-logic berror, bdone, bstart;
-tsize_t tsize;
+typedef enum logic {
+    READ = 0,
+    WRITE = 1
+} ttype_e;
 
-modport master(output wdata, output addr, output bstart, output tsize, input rdata, input berror, input bdone);
+typedef struct {
+    tsize_e tsize;
+    ttype_e ttype;
+    logic [31:0] data;
+    logic [31:0] rdata;
+} transaction;
 
+interface master_bus_if(input bclk, input brst_n);
+    logic [31:0] wdata, rdata;
+    logic [31:0] addr;
+    tsize_e tsize;
+    logic berror, bdone, bstart, bgnt, breq;
+    
+    modport master(
+        output wdata, addr, bstart, tsize, breq,
+        input rdata, berror, bdone, bgnt
+    );
+    
+    modport ic(
+        input wdata, addr, bstart, tsize, breq,
+        output rdata, berror, bdone, bgnt
+    );
+endinterface
+
+interface slave_bus_if(input bclk, input brst_n);
+    logic [31:0] wdata, rdata;
+    logic [31:0] addr;
+    tsize_e tsize;
+    logic berror, bdone, bstart, ss;
+    
+    modport ic(
+        output wdata, addr, bstart, tsize, ss,
+        input rdata, berror, bdone
+    );
+    
+    modport slave(
+        input wdata, addr, bstart, tsize, ss,
+        output rdata, berror, bdone
+    );
 endinterface

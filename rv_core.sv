@@ -1,4 +1,4 @@
-module rv_core(bus_if.master bus, input clk, input rst_n);
+module rv_core(master_bus_if.master fabric, input clk, input rst_n);
 
 logic [31:0] pc, next_pc;
 
@@ -47,7 +47,7 @@ logic mem_addr;
 logic [31:0] mem_wrdata;
 logic mem_r;
 logic [31:0] mem_rdata;
-bus_if.tsize_t tsize;
+tsize_e tsize;
 
 always_comb begin
     opcode = instruction[6:0];
