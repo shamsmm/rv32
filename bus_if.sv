@@ -24,7 +24,7 @@ interface master_bus_if(input bclk, input brst_n);
     
     modport master(
         output wdata, addr, bstart, tsize, breq,
-        input rdata, berror, bdone, bgnt
+        input rdata, berror, bdone, bgnt, bclk
     );
     
     modport ic(
@@ -45,7 +45,7 @@ interface slave_bus_if(input bclk, input brst_n);
     );
     
     modport slave(
-        input wdata, addr, bstart, tsize, ss,
+        input wdata, addr, bstart, tsize, ss, bclk,
         output rdata, berror, bdone
     );
 endinterface
