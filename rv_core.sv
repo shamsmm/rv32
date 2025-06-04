@@ -10,6 +10,22 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input rst_n
 );
 
+enum {IF, EX, MA, WB} state, next_state;
+
+always_ff @(posedge clk or negedge rst_n)
+    if(!rst_n)
+        state <= IF;
+    else
+        state <= next_state;
+
+always_comb 
+    case(state)
+        IF: next_state = ibus.bdone ? EX : IF;
+        EX: next_state = (mem_wr | mem_rd) ? MA : WB;
+        MA: next_state = dbus.bdone ? WB : MA;
+        WB: next_state = IF;
+    endcase
+
 localparam bit [31:0] NOP = 0;
 
 logic [31:0] pc, next_pc;
@@ -25,15 +41,13 @@ end
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         pc <= INITIAL_PC;
-    else
+    else if (next_state == IF)
         pc <= next_pc;
 end
 
 always_ff @(posedge clk) begin
-    if (!ibus.berror && ibus.bgnt && ibus.bdone)
-        instruction <= ibus.rdata;
-    else if (dbus.bdone) // prevent changing state untill data was written back in rf or in memory
-        instruction <= NOP;
+    if (state == IF)
+        instruction <= ibus.rdata; // may be grabage but after some time it is ok
 end
 
 // IF
