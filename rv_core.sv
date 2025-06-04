@@ -1,6 +1,8 @@
 `include "bus_if.svh"
 `include "instructions.svh"
 
+// Core with I-Bus interface and D-bus interface; both maybe connected with a crossbar
+// but to avoid structural hazard, allow high performance SRAM to have dual ports
 module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     master_bus_if.master dbus,
     master_bus_if.master ibus,
@@ -69,17 +71,20 @@ logic [4:0] alu_shamt;
 logic [2:0] alu_funct3;
 logic [6:0] alu_funct7;
 
-logic [31:0] rf_rs1, rf_rs2, rf_rd, rf_wr, rf_wrdata, rf_r1, rf_r2;
+logic [31:0] rf_wrdata, rf_r1, rf_r2;
+logic [4:0] rf_rs1, rf_rs2, rf_rd;
+logic rf_wr;
 
 logic branch;
 
 logic mem_wr;
 logic mem_rd;
-logic mem_addr;
-logic [31:0] mem_wrdata;
+logic [31:0] mem_addr, mem_wrdata, mem_rdata;
 logic mem_r;
-logic [31:0] mem_rdata;
+
 tsize_e tsize;
+
+logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 
 always_comb begin
     dbus.wdata = mem_wrdata;
@@ -122,7 +127,7 @@ always_comb begin
                             3'b000: rf_wrdata = {{24{mem_rdata[7]}}, mem_rdata[7:0]}; // LB
                             3'b001: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LH
                             3'b010: rf_wrdata = mem_rdata; // LW
-                            3'b100: rf_wrdata = {{24{0}}, mem_rdata[7:0]}; // LBU
+                            3'b100: rf_wrdata = {{24{1'b0}}, mem_rdata[7:0]}; // LBU
                             3'b101: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LHU
                         endcase
 
@@ -216,7 +221,7 @@ always_comb begin
                         endcase
                         
                         if (branch)
-                            next_pc = pc + $signed({{11{btype_i.imm_b12}}, btype_i.imm_b12, btype_i.imm_b11, btype_i.imm_b10_5, btype_i.imm_b4_1, 0});
+                            next_pc = pc + $signed({{19{btype_i.imm_b12}}, btype_i.imm_b12, btype_i.imm_b11, btype_i.imm_b10_5, btype_i.imm_b4_1, 1'b0});
                     end
                     3'b001: begin // JALR
                         rf_rs1 = itype_i.rs1;
@@ -225,11 +230,11 @@ always_comb begin
                         rf_wrdata = pc + 4;
                         
                         next_pc = $signed({{20{itype_i.imm[31]}}, itype_i.imm}) + rf_r1;
-                        next_pc[0] = 0;
+                        next_pc[0] = 1'b0;
                     end
                     3'b010: ; // reserved
                     3'b011: begin // JAL
-                        next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 0});
+                        next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
                         rf_rd = jtype_i.rd;
                         rf_wr = 1'b1;
                         rf_wrdata = pc + 4;
@@ -252,6 +257,8 @@ rf rf_u0(
     .r1(rf_r1),
     .r2(rf_r2)
 );
+
+
 
 alu alu_u0(
     .in1(alu_in1),
