@@ -106,19 +106,21 @@ always_comb begin
     dbus.wdata = mem_wrdata;
     dbus.addr = mem_addr;
     mem_rdata = dbus.rdata;
+    dbus.tsize = tsize;
 end
 
 // state changing
-always_ff @(posedge clk) begin
+always_comb begin
+    dbus.bstart = 1'b0;
+    dbus.ttype = READ;
+
     if (state == MA) begin
         if (mem_wr) begin
-            dbus.bstart <= 1'b1;
-            dbus.ttype <= WRITE;
+            dbus.bstart = 1'b1;
+            dbus.ttype = WRITE;
         end else if (mem_rd) begin
-            dbus.bstart <= 1'b1;
-            dbus.ttype <= READ;
-        end else begin
-            dbus.bstart <= 1'b0;
+            dbus.bstart = 1'b1;
+            dbus.ttype = READ;
         end
     end
 end
@@ -129,6 +131,11 @@ always_comb begin
 
     next_pc = pc + 4;
     assert(next_pc[1:0] == 2'b00);
+
+    // defaults
+    rf_wr = 1'b0;
+    mem_wr = 1'b0;
+    mem_rd = 1'b0;
 
     if (opcode[1:0] == 2'b11)
         case(opcode[6:5])
