@@ -100,21 +100,26 @@ tsize_e tsize;
 
 logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 
+logic wb_rf_wr = (state == WB) ? rf_wr : 1'b0;
+
 always_comb begin
     dbus.wdata = mem_wrdata;
     dbus.addr = mem_addr;
     mem_rdata = dbus.rdata;
 end
 
+// state changing
 always_ff @(posedge clk) begin
-    if (mem_wr) begin
-        dbus.bstart <= 1'b1;
-        dbus.ttype <= WRITE;
-    end else if (mem_rd) begin
-        dbus.bstart <= 1'b1;
-        dbus.ttype <= READ;
-    end else begin
-        dbus.bstart <= 1'b0;
+    if (state == MA) begin
+        if (mem_wr) begin
+            dbus.bstart <= 1'b1;
+            dbus.ttype <= WRITE;
+        end else if (mem_rd) begin
+            dbus.bstart <= 1'b1;
+            dbus.ttype <= READ;
+        end else begin
+            dbus.bstart <= 1'b0;
+        end
     end
 end
 
@@ -266,7 +271,7 @@ rf rf_u0(
     .rs1(rf_rs1),
     .rs2(rf_rs2),
     .rd(rf_rd),
-    .wr(rf_wr),
+    .wr(wb_rf_wr), // state changing
     .wrdata(rf_wrdata),
     .r1(rf_r1),
     .r2(rf_r2)
