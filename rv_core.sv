@@ -1,5 +1,5 @@
-`include "bus_if.svh"
-`include "instructions.svh"
+import instructions::*;
+import bus_if_types_pkg::*;
 
 // Core with I-Bus interface and D-bus interface; both maybe connected with a crossbar
 // but to avoid structural hazard, allow high performance SRAM to have dual ports
@@ -18,13 +18,16 @@ always_ff @(posedge clk or negedge rst_n)
     else
         state <= next_state;
 
-always_comb 
+always_comb begin 
+    next_state = IF;
+
     case(state)
         IF: next_state = ibus.bdone ? EX : IF;
         EX: next_state = (mem_wr | mem_rd) ? MA : WB;
         MA: next_state = dbus.bdone ? WB : MA;
         WB: next_state = IF;
     endcase
+end
 
 localparam bit [31:0] NOP = 0;
 
@@ -36,6 +39,7 @@ always_comb begin
     ibus.tsize = WORD;
     ibus.bstart = 1'b1;
     ibus.addr = pc;
+    ibus.wdata = 32'b0;
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
@@ -100,10 +104,10 @@ tsize_e tsize;
 
 logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 
-logic wb_rf_wr = (state == WB) ? rf_wr : 1'b0;
 
 always_comb begin
     dbus.wdata = mem_wrdata;
+    dbus.breq = 1'b1;
     dbus.addr = mem_addr;
     mem_rdata = dbus.rdata;
     dbus.tsize = tsize;
@@ -134,8 +138,26 @@ always_comb begin
 
     // defaults
     rf_wr = 1'b0;
+    rf_wrdata = 32'b0;
+    rf_rd = 5'b0;
+    rf_rs1 = 5'b0;
+    rf_rs2 = 5'b0;
+
     mem_wr = 1'b0;
     mem_rd = 1'b0;
+    mem_wrdata = 32'b0;
+    mem_addr = 32'b0;
+
+    branch = 0;
+
+    alu_in1 = 32'b0;
+    alu_in2 = 32'b0;
+    alu_funct7 = 7'b0;
+    alu_funct3 = 3'b0;
+    alu_use_shamt = 1'b0;
+    alu_shamt = 5'b0;
+
+    tsize = WORD;
 
     if (opcode[1:0] == 2'b11)
         case(opcode[6:5])
@@ -227,9 +249,7 @@ always_comb begin
                 endcase
             2'b11:
                 case(opcode[4:2])
-                    3'b000: begin // BRANCH
-                        branch = 0;
-                        
+                    3'b000: begin // BRANCH                     
                         rf_rs1 = btype_i.rs1;
                         rf_rs2 = btype_i.rs2;
                         alu_in1 = rf_r1;
@@ -278,7 +298,7 @@ rf rf_u0(
     .rs1(rf_rs1),
     .rs2(rf_rs2),
     .rd(rf_rd),
-    .wr(wb_rf_wr), // state changing
+    .wr((state == WB) ? rf_wr : 1'b0), // state changing
     .wrdata(rf_wrdata),
     .r1(rf_r1),
     .r2(rf_r2)

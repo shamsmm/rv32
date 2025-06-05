@@ -17,6 +17,9 @@ assign zero = out == 0;
 assign overflow = (in1[31] == in2[31]) && (in1[31] != out[31]);
 
 always_comb begin
+    out = 0;
+    carry = 0;
+
     case(funct7)
         7'b0000000: begin
             case(funct3)

@@ -1,3 +1,5 @@
+package instructions;
+
 typedef struct packed {
     bit [31:25] funct7;
     bit [24:20] rs2;
@@ -49,3 +51,5 @@ typedef struct packed {
     bit [11:7] rd;
     bit [6:0] opcode;
 } jtype;
+
+endpackage
