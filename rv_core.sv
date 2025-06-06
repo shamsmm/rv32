@@ -20,9 +20,13 @@ always_ff @(posedge clk or negedge rst_n)
 
 always_comb begin 
     next_state = IF;
+    ibus.bstart = 1'b0;
 
     case(state)
-        IF: next_state = ibus.bdone ? EX : IF;
+        IF: begin 
+            ibus.bstart = 1'b1;
+            next_state = ibus.bdone ? EX : IF; 
+        end
         EX: next_state = (mem_wr | mem_rd) ? MA : WB;
         MA: next_state = dbus.bdone ? WB : MA;
         WB: next_state = IF;
@@ -37,7 +41,6 @@ always_comb begin
     ibus.breq = 1'b1;
     ibus.ttype = READ;
     ibus.tsize = WORD;
-    ibus.bstart = 1'b1;
     ibus.addr = pc;
     ibus.wdata = 32'b0;
 end
@@ -45,13 +48,13 @@ end
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         pc <= INITIAL_PC;
-    else if (next_state == IF)
+    else if (state == WB) // last state
         pc <= next_pc;
 end
 
 always_ff @(posedge clk) begin
-    if (state == IF)
-        instruction <= ibus.rdata; // may be grabage but after some time it is ok
+    if (state == IF && ibus.bdone)
+        instruction <= ibus.rdata;
 end
 
 // IF
