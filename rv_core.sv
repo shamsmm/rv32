@@ -10,7 +10,7 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input rst_n
 );
 
-enum {IF, EX, MA, WB} state, next_state;
+enum logic [1:0] {IF, EX, MA, WB} state, next_state;
 
 always_ff @(posedge clk or negedge rst_n)
     if(!rst_n)
