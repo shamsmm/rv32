@@ -86,7 +86,7 @@ end
 
 logic [6:0] opcode;
 
-logic [31:0] alu_in1, alu_in2, alu_out;
+logic [31:0] alu_in2, alu_out;
 logic alu_use_shamt;
 logic [4:0] alu_shamt;
 logic [2:0] alu_funct3;
@@ -153,7 +153,6 @@ always_comb begin
 
     branch = 0;
 
-    alu_in1 = 32'b0;
     alu_in2 = 32'b0;
     alu_funct7 = 7'b0;
     alu_funct3 = 3'b0;
@@ -197,7 +196,6 @@ always_comb begin
                         alu_funct7 = alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
                         alu_use_shamt = 1'b1;
                         alu_shamt = itype_i.imm[24:20];
-                        alu_in1 = rf_r1;
                         alu_in2 = $signed({{20{itype_i.imm[31]}}, itype_i.imm});
                     end
                     3'b101: begin // AUIPC
@@ -228,7 +226,6 @@ always_comb begin
                         rf_rs2 = rtype_i.rs2;
                         rf_wr = 1'b1;
                         rf_wrdata = alu_out;
-                        alu_in1 = rf_r1;
                         alu_in2 = rf_r2;
                         alu_funct3 = rtype_i.funct3;
                         alu_funct7 = rtype_i.funct7;
@@ -255,7 +252,6 @@ always_comb begin
                     3'b000: begin // BRANCH                     
                         rf_rs1 = btype_i.rs1;
                         rf_rs2 = btype_i.rs2;
-                        alu_in1 = rf_r1;
                         alu_in2 = rf_r2;
                         alu_funct7 = 7'b0100000; // subtract
                         alu_funct3 = 3'b000; // subtract
@@ -308,9 +304,8 @@ rf rf_u0(
 );
 
 
-
 alu alu_u0(
-    .in1(alu_in1),
+    .in1(rf_rs1), // always
     .in2(alu_in2),
     .use_shamt(alu_use_shamt),
     .shamt(alu_shamt),
