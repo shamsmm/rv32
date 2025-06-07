@@ -101,7 +101,7 @@ logic branch;
 
 logic mem_wr;
 logic mem_rd;
-logic [31:0] mem_addr, mem_wrdata, mem_rdata;
+logic [31:0] mem_addr, mem_rdata;
 logic mem_r;
 
 tsize_e tsize;
@@ -110,7 +110,7 @@ logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 
 
 always_comb begin
-    dbus.wdata = mem_wrdata;
+    dbus.wdata = rf_r2; // always writing from data in register
     dbus.breq = 1'b1;
     dbus.addr = mem_addr;
     mem_rdata = dbus.rdata;
@@ -147,8 +147,6 @@ always_comb begin
 
     mem_wr = 1'b0;
     mem_rd = 1'b0;
-    mem_wrdata = 32'b0;
-    mem_addr = 32'b0;
 
     branch = 0;
 
@@ -175,7 +173,7 @@ always_comb begin
                         tsize = tsize_e'(itype_i.funct3[14:12]); // by ISA
 
                         mem_rd = 1'b1;
-                        mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
+                        
                     end
                     3'b001: mopcode = LOAD_FP; // LOAD-FP
                     3'b010: mopcode = custom_0; // custom-0
@@ -203,8 +201,7 @@ always_comb begin
                         rf_rs2 = stype_i.rs2;
     
                         mem_wr = 1'b1;
-                        mem_addr = rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
-                        mem_wrdata = rf_r2; // will be trimmed
+                        
 
                         tsize = tsize_e'(stype_i.funct3[14:12]);
                     end
@@ -277,6 +274,14 @@ always_comb begin
         endcase
 end
 
+// memory access address
+always_comb
+    case(mopcode)
+        LOAD: mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
+        STORE: mem_addr = rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
+        default: mem_addr = 32'b0;
+    endcase
+
 // pc write
 always_comb
     case(mopcode)
@@ -304,6 +309,7 @@ always_comb
                 3'b010: rf_wrdata = mem_rdata; // LW
                 3'b100: rf_wrdata = {{24{1'b0}}, mem_rdata[7:0]}; // LBU
                 3'b101: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LHU
+                default: rf_wrdata = 32'b0;
             endcase
         OP_IMM: rf_wrdata = alu_out;
         AUIPC: rf_wrdata = {utype_i.imm, {12{1'b0}}} + pc;
