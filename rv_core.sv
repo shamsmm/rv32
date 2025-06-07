@@ -139,9 +139,6 @@ enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, S
 always_comb begin
     opcode = instruction[6:0];
 
-    next_pc = pc + 4;
-    assert(next_pc[1:0] == 2'b00);
-
     // defaults
     rf_wr = 1'b0;
     rf_rd = 5'b0;
@@ -259,22 +256,17 @@ always_comb begin
                             3'b111: branch = alu_out_c; // BGEU
                         endcase
                         
-                        if (branch)
-                            next_pc = pc + $signed({{19{btype_i.imm_b12}}, btype_i.imm_b12, btype_i.imm_b11, btype_i.imm_b10_5, btype_i.imm_b4_1, 1'b0});
+                        
                     end
                     3'b001: begin // JALR
                         mopcode = JALR;
                         rf_rs1 = itype_i.rs1;
                         rf_rd = itype_i.rd;
                         rf_wr = 1'b1;
-                        
-                        next_pc = $signed({{20{itype_i.imm[31]}}, itype_i.imm}) + rf_r1;
-                        next_pc[0] = 1'b0;
                     end
                     3'b010: ; // reserved
                     3'b011: begin // JAL
                         mopcode = JAL;
-                        next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
                         rf_rd = jtype_i.rd;
                         rf_wr = 1'b1;
                     end
@@ -285,8 +277,25 @@ always_comb begin
         endcase
 end
 
+// pc write
+always_comb
+    case(mopcode)
+        BRANCH: begin 
+            if (branch)
+                next_pc = pc + $signed({{19{btype_i.imm_b12}}, btype_i.imm_b12, btype_i.imm_b11, btype_i.imm_b10_5, btype_i.imm_b4_1, 1'b0});
+            else
+                next_pc = pc + 4;
+        end
+        JALR: begin
+            next_pc = $signed({{20{itype_i.imm[31]}}, itype_i.imm}) + rf_r1;
+            next_pc[0] = 1'b0;
+        end
+        JAL: next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
+        default: next_pc = pc + 4;
+    endcase
+
 // register file write
-always_comb begin
+always_comb
     case(mopcode)
         LOAD: 
             case(itype_i.funct3)
@@ -302,8 +311,8 @@ always_comb begin
         LUI: rf_wrdata = {utype_i.imm, {12{1'b0}}};
         JALR: rf_wrdata = pc + 4;
         JAL: rf_wrdata = pc + 4;
+        default: rf_wrdata = 32'b0;
     endcase
-end
 
 rf rf_u0(
     .clk(clk),
