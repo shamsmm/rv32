@@ -134,6 +134,8 @@ always_comb begin
 end
 
 
+enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, STORE, STORE_FP, custom_1, AMO, OP, LUI, OP_32, MADD, MSUB, NMSUB, NMADD, OP_FP, OP_V, custom_2, BRANCH, JALR, JAL, SYSTEM, OP_VE, custom_3} mopcode; // major opcode
+
 always_comb begin
     opcode = instruction[6:0];
 
@@ -167,6 +169,8 @@ always_comb begin
             2'b00:
                 case(opcode[4:2])
                     3'b000: begin // LOAD
+                        mopcode = LOAD;
+
                         rf_rd = itype_i.rd;
                         rf_rs1 = itype_i.rs1;
                          
@@ -185,30 +189,30 @@ always_comb begin
                         mem_rd = 1'b1;
                         mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
                     end
-                    3'b001: ; // LOAD-FP
-                    3'b010: ; // custom-0
-                    3'b011: ; // MISC-MEM
+                    3'b001: mopcode = LOAD_FP; // LOAD-FP
+                    3'b010: mopcode = custom_0; // custom-0
+                    3'b011: mopcode = MISC_MEM; // MISC-MEM
                     3'b100: begin // OP-IMM
+                        mopcode = OP_IMM;
                         rf_rd = itype_i.rd;
                         rf_rs1 = itype_i.rs1;
                         rf_wr = 1'b1;
                         rf_wrdata = alu_out;
                         alu_funct3 = itype_i.funct3;
                         alu_funct7 = alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
-                        alu_use_shamt = 1'b1;
-                        alu_shamt = itype_i.imm[24:20];
-                        id_imm = 1'b1;
                     end
                     3'b101: begin // AUIPC
+                        mopcode = AUIPC;
                         rf_wr = 1'b1;
                         rf_rd = utype_i.rd;
                         rf_wrdata = {utype_i.imm, {12{1'b0}}} + pc;
                     end
-                    3'b110: ; // OP-IMM-32
+                    3'b110: mopcode = OP_IMM_32; // OP-IMM-32
                 endcase
             2'b01:
                 case(opcode[4:2])
                     3'b000: begin // STORE
+                        mopcode = STORE;
                         rf_rs1 = stype_i.rs1;
                         rf_rs2 = stype_i.rs2;
     
@@ -218,10 +222,11 @@ always_comb begin
 
                         tsize = tsize_e'(stype_i.funct3[14:12]);
                     end
-                    3'b001: ; // STORE-FP
-                    3'b010: ; // custom-1
-                    3'b011: ; // AMO
+                    3'b001: mopcode = STORE_FP; // STORE-FP
+                    3'b010: mopcode = custom_1; // custom-1
+                    3'b011: mopcode = AMO; // AMO
                     3'b100: begin // OP
+                        mopcode = OP;
                         rf_rd = rtype_i.rd;
                         rf_rs1 = rtype_i.rs1;
                         rf_rs2 = rtype_i.rs2;
@@ -231,25 +236,27 @@ always_comb begin
                         alu_funct7 = rtype_i.funct7;
                     end
                     3'b101: begin // LUI
+                        mopcode = LUI;
                         rf_wr = 1'b1;
                         rf_rd = utype_i.rd;
                         rf_wrdata = {utype_i.imm, {12{1'b0}}};
                     end
-                    3'b110: ; // OP-32
+                    3'b110: mopcode = OP_32; // OP-32
                 endcase
             2'b10:
                 case(opcode[4:2])
-                    3'b000: ; // MADD
-                    3'b001: ; // MSUB
-                    3'b010: ; // NMSUB
-                    3'b011: ; // NMADD
-                    3'b100: ; // OP-FP
-                    3'b101: ; // reserved
-                    3'b110: ; // custom-2/RV128
+                    3'b000: mopcode = MADD; // MADD
+                    3'b001: mopcode = MSUB; // MSUB
+                    3'b010: mopcode = NMSUB; // NMSUB
+                    3'b011: mopcode = NMADD; // NMADD
+                    3'b100: mopcode = OP_FP; // OP-FP
+                    3'b101: mopcode = OP_V; // OP-V
+                    3'b110: mopcode = custom_2; // custom-2/RV128
                 endcase
             2'b11:
                 case(opcode[4:2])
                     3'b000: begin // BRANCH                     
+                        mopcode = BRANCH;
                         rf_rs1 = btype_i.rs1;
                         rf_rs2 = btype_i.rs2;
                         alu_funct7 = 7'b0100000; // subtract
@@ -268,6 +275,7 @@ always_comb begin
                             next_pc = pc + $signed({{19{btype_i.imm_b12}}, btype_i.imm_b12, btype_i.imm_b11, btype_i.imm_b10_5, btype_i.imm_b4_1, 1'b0});
                     end
                     3'b001: begin // JALR
+                        mopcode = JALR;
                         rf_rs1 = itype_i.rs1;
                         rf_rd = itype_i.rd;
                         rf_wr = 1'b1;
@@ -278,14 +286,15 @@ always_comb begin
                     end
                     3'b010: ; // reserved
                     3'b011: begin // JAL
+                        mopcode = JAL;
                         next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
                         rf_rd = jtype_i.rd;
                         rf_wr = 1'b1;
                         rf_wrdata = pc + 4;
                     end
-                    3'b100: ; // SYSTEM
-                    3'b101: ; // reserved
-                    3'b110: ; // custom-3/RV128
+                    3'b100: mopcode = SYSTEM; // SYSTEM
+                    3'b101: mopcode = OP_VE; // OP-VE
+                    3'b110: mopcode = custom_3; // custom-3/RV128
                 endcase
         endcase
 end
@@ -306,9 +315,9 @@ logic [31:0] imm = $signed({{20{itype_i.imm[31]}}, itype_i.imm});
 
 alu alu_u0(
     .in1(rf_r1), // always
-    .in2(id_imm ? imm : rf_r2),
-    .use_shamt(alu_use_shamt),
-    .shamt(alu_shamt),
+    .in2((mopcode == OP_IMM) ? imm : rf_r2),
+    .use_shamt(mopcode == OP_IMM),
+    .shamt(itype_i.imm[24:20]),
     .out(alu_out),
     .carry(alu_out_c),
     .negative(alu_out_n),
