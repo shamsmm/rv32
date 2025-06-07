@@ -6,9 +6,34 @@ import bus_if_types_pkg::*;
 module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     master_bus_if.master dbus,
     master_bus_if.master ibus,
-    input clk,
-    input rst_n
+    input bit clk,
+    input bit rst_n,
+
+    input bit haltreq = 1'b0,
+    input bit resumereq = 1'b0,
+    input bit resethaltreq = 1'b0
 );
+
+// rv_core_csr zicsr(.csr_*)
+
+enum logic [2:0] {RESET, NORMAL, HALTING, HALTED, RESUMING} hstate, next_hstate; // hart state for DM
+
+always_ff @(posedge clk, negedge rst_n) begin
+    if (!rst_n)
+        hstate <= RESET;
+    else begin
+        hstate <= next_hstate;
+    end
+end
+
+always_comb
+    case(hstate)
+        RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
+        NORMAL: next_hstate = haltreq ? HALTING : NORMAL;
+        HALTING: next_hstate = (state == WB) ? HALTED : NORMAL; // halt next after writing back (IF phase)
+        HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
+        RESUMING: next_hstate = NORMAL;
+    endcase
 
 enum logic [1:0] {IF, EX, MA, WB} state, next_state;
 
@@ -18,19 +43,22 @@ always_ff @(posedge clk or negedge rst_n)
     else
         state <= next_state;
 
+logic halt = (hstate == HALTED);
+
 always_comb begin 
     next_state = IF;
     ibus.bstart = 1'b0;
 
-    case(state)
-        IF: begin 
-            ibus.bstart = 1'b1;
-            next_state = ibus.bdone ? EX : IF; 
-        end
-        EX: next_state = (mem_wr | mem_rd) ? MA : WB;
-        MA: next_state = dbus.bdone ? WB : MA;
-        WB: next_state = IF;
-    endcase
+    if (!halt) // gaurantee to halt only on Instruction Fetch
+        case(state)
+            IF: begin 
+                ibus.bstart = 1'b1;
+                next_state = ibus.bdone ? EX : IF; 
+            end
+            EX: next_state = (mem_wr | mem_rd) ? MA : WB;
+            MA: next_state = dbus.bdone ? WB : MA;
+            WB: next_state = IF;
+        endcase
 end
 
 localparam bit [31:0] NOP = 0;
