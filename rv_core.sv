@@ -144,7 +144,6 @@ always_comb begin
 
     // defaults
     rf_wr = 1'b0;
-    rf_wrdata = 32'b0;
     rf_rd = 5'b0;
     rf_rs1 = 5'b0;
     rf_rs2 = 5'b0;
@@ -178,14 +177,6 @@ always_comb begin
                         
                         tsize = tsize_e'(itype_i.funct3[14:12]); // by ISA
 
-                        case(itype_i.funct3)
-                            3'b000: rf_wrdata = {{24{mem_rdata[7]}}, mem_rdata[7:0]}; // LB
-                            3'b001: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LH
-                            3'b010: rf_wrdata = mem_rdata; // LW
-                            3'b100: rf_wrdata = {{24{1'b0}}, mem_rdata[7:0]}; // LBU
-                            3'b101: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LHU
-                        endcase
-
                         mem_rd = 1'b1;
                         mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
                     end
@@ -197,7 +188,6 @@ always_comb begin
                         rf_rd = itype_i.rd;
                         rf_rs1 = itype_i.rs1;
                         rf_wr = 1'b1;
-                        rf_wrdata = alu_out;
                         alu_funct3 = itype_i.funct3;
                         alu_funct7 = alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
                     end
@@ -205,7 +195,6 @@ always_comb begin
                         mopcode = AUIPC;
                         rf_wr = 1'b1;
                         rf_rd = utype_i.rd;
-                        rf_wrdata = {utype_i.imm, {12{1'b0}}} + pc;
                     end
                     3'b110: mopcode = OP_IMM_32; // OP-IMM-32
                 endcase
@@ -231,7 +220,7 @@ always_comb begin
                         rf_rs1 = rtype_i.rs1;
                         rf_rs2 = rtype_i.rs2;
                         rf_wr = 1'b1;
-                        rf_wrdata = alu_out;
+                        
                         alu_funct3 = rtype_i.funct3;
                         alu_funct7 = rtype_i.funct7;
                     end
@@ -239,7 +228,6 @@ always_comb begin
                         mopcode = LUI;
                         rf_wr = 1'b1;
                         rf_rd = utype_i.rd;
-                        rf_wrdata = {utype_i.imm, {12{1'b0}}};
                     end
                     3'b110: mopcode = OP_32; // OP-32
                 endcase
@@ -279,7 +267,6 @@ always_comb begin
                         rf_rs1 = itype_i.rs1;
                         rf_rd = itype_i.rd;
                         rf_wr = 1'b1;
-                        rf_wrdata = pc + 4;
                         
                         next_pc = $signed({{20{itype_i.imm[31]}}, itype_i.imm}) + rf_r1;
                         next_pc[0] = 1'b0;
@@ -290,13 +277,32 @@ always_comb begin
                         next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
                         rf_rd = jtype_i.rd;
                         rf_wr = 1'b1;
-                        rf_wrdata = pc + 4;
                     end
                     3'b100: mopcode = SYSTEM; // SYSTEM
                     3'b101: mopcode = OP_VE; // OP-VE
                     3'b110: mopcode = custom_3; // custom-3/RV128
                 endcase
         endcase
+end
+
+// register file write
+always_comb begin
+    case(mopcode)
+        LOAD: 
+            case(itype_i.funct3)
+                3'b000: rf_wrdata = {{24{mem_rdata[7]}}, mem_rdata[7:0]}; // LB
+                3'b001: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LH
+                3'b010: rf_wrdata = mem_rdata; // LW
+                3'b100: rf_wrdata = {{24{1'b0}}, mem_rdata[7:0]}; // LBU
+                3'b101: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LHU
+            endcase
+        OP_IMM: rf_wrdata = alu_out;
+        AUIPC: rf_wrdata = {utype_i.imm, {12{1'b0}}} + pc;
+        OP: rf_wrdata = alu_out;
+        LUI: rf_wrdata = {utype_i.imm, {12{1'b0}}};
+        JALR: rf_wrdata = pc + 4;
+        JAL: rf_wrdata = pc + 4;
+    endcase
 end
 
 rf rf_u0(
