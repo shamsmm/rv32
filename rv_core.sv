@@ -33,6 +33,7 @@ always_comb
         HALTING: next_hstate = (state == WB) ? HALTED : NORMAL; // halt next after writing back (IF phase)
         HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
         RESUMING: next_hstate = NORMAL;
+        default: next_hstate = NORMAL;
     endcase
 
 enum logic [1:0] {IF, EX, MA, WB} state, next_state;
@@ -43,13 +44,11 @@ always_ff @(posedge clk or negedge rst_n)
     else
         state <= next_state;
 
-logic halt = (hstate == HALTED);
-
 always_comb begin 
     next_state = IF;
     ibus.bstart = 1'b0;
 
-    if (!halt) // gaurantee to halt only on Instruction Fetch
+    if (!(hstate == HALTED)) // gaurantee to halt only on Instruction Fetch
         case(state)
             IF: begin 
                 ibus.bstart = 1'b1;
@@ -162,9 +161,10 @@ always_comb begin
 end
 
 
-enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, STORE, STORE_FP, custom_1, AMO, OP, LUI, OP_32, MADD, MSUB, NMSUB, NMADD, OP_FP, OP_V, custom_2, BRANCH, JALR, JAL, SYSTEM, OP_VE, custom_3} mopcode; // major opcode
+enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, STORE, STORE_FP, custom_1, AMO, OP, LUI, OP_32, MADD, MSUB, NMSUB, NMADD, OP_FP, OP_V, custom_2, BRANCH, JALR, JAL, SYSTEM, OP_VE, custom_3, UNKNOWN} mopcode; // major opcode
 
 always_comb begin
+    mopcode = UNKNOWN;
     opcode = instruction[6:0];
 
     // defaults
@@ -360,11 +360,9 @@ rf rf_u0(
     .r2(rf_r2)
 );
 
-logic [31:0] imm = $signed({{20{itype_i.imm[31]}}, itype_i.imm});
-
 alu alu_u0(
     .in1(rf_r1), // always
-    .in2((mopcode == OP_IMM) ? imm : rf_r2),
+    .in2((mopcode == OP_IMM) ? $signed({{20{itype_i.imm[31]}}, itype_i.imm}) : rf_r2),
     .use_shamt(mopcode == OP_IMM),
     .shamt(itype_i.imm[24:20]),
     .out(alu_out),
