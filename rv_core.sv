@@ -1,17 +1,28 @@
 import instructions::*;
 import bus_if_types_pkg::*;
 
+`include "funct3.sv" // funct3 encoded values in BRANCH and SYSTEM major opcodes
+
 // Core with I-Bus interface and D-bus interface; both maybe connected with a crossbar
 // but to avoid structural hazard, allow high performance SRAM to have dual ports
 module  rv_core #(parameter logic [31:0] INITIAL_PC) (
+    // bus interfaces
     master_bus_if.master dbus,
     master_bus_if.master ibus,
+
+    // clock and reset
     input bit clk,
     input bit rst_n,
 
+    // debug access
     input bit haltreq = 1'b0,
     input bit resumereq = 1'b0,
-    input bit resethaltreq = 1'b0
+    input bit resethaltreq = 1'b0,
+
+    // interrupts from PLIC or timer or external
+    input bit irq_sw = 1'b0,
+    input bit irq_ext = 1'b0,
+    input bit irq_timer = 1'b0
 );
 
 // rv_core_csr zicsr(.csr_*)
@@ -135,6 +146,16 @@ tsize_e tsize;
 
 logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 
+mstatus_t mstatus;
+mtvec_t mtvec;
+mcause_t mcause;
+logic [31:0] mip, mie;
+
+logic csr_wr;
+logic [11:0] csr_addr;
+logic [31:0] csr_wrdata;
+logic [31:0] csr_read;
+
 
 always_comb begin
     dbus.wdata = rf_r2; // always writing from data in register
@@ -183,6 +204,10 @@ always_comb begin
     alu_funct3 = 3'b0;
     alu_use_shamt = 1'b0;
     alu_shamt = 5'b0;
+
+    csr_addr = 0;
+    csr_wr = 0;
+    csr_wrdata = 0;
 
     tsize = WORD;
 
@@ -295,7 +320,43 @@ always_comb begin
                         rf_rd = jtype_i.rd;
                         rf_wr = 1'b1;
                     end
-                    3'b100: mopcode = SYSTEM; // SYSTEM
+                    3'b100: begin // SYSTEM
+                        mopcode = SYSTEM; 
+
+                        rf_wr = 1;
+                        rf_rd = itype_i.rd;
+                        rf_rs1 = itype_i.rs1;
+
+                        // zero extend
+                        csr_addr = itype_i.imm;
+
+                        case(itype_i.funct3)
+                            `CSRRW: begin
+                                csr_wr = 1;
+                                csr_wrdata = rf_r1;
+                            end
+                            `CSRRS: begin
+                                csr_wr = itype_i.rs1 != 0;
+                                csr_wrdata = csr_read | rf_r1;
+                            end
+                            `CSRRC: begin
+                                csr_wr = itype_i.rs1 != 0;
+                                csr_wrdata = csr_read & (~rf_r1);
+                            end
+                            `CSRRWI: begin
+                                csr_wr = 1;
+                                csr_wrdata = {27'b0, itype_i.rs1};
+                            end
+                            `CSRRSI: begin
+                                csr_wr = itype_i.rs1 != 0;
+                                csr_wrdata = csr_read | {27'b0, itype_i.rs1};
+                            end
+                            `CSRRCI: begin
+                                csr_wr = itype_i.rs1 != 0;
+                                csr_wrdata = csr_read & {27'b0, (~itype_i.rs1)};
+                            end
+                        endcase
+                    end
                     3'b101: mopcode = OP_VE; // OP-VE
                     3'b110: mopcode = custom_3; // custom-3/RV128
                 endcase
@@ -345,6 +406,7 @@ always_comb
         LUI: rf_wrdata = {utype_i.imm, {12{1'b0}}};
         JALR: rf_wrdata = pc + 4;
         JAL: rf_wrdata = pc + 4;
+        SYSTEM: rf_wrdata = csr_read;
         default: rf_wrdata = 32'b0;
     endcase
 
@@ -358,6 +420,24 @@ rf rf_u0(
     .wrdata(rf_wrdata),
     .r1(rf_r1),
     .r2(rf_r2)
+);
+
+csr csr_u0(
+    .clk(clk),
+    .rst_n(rst_n),
+
+    .wr(csr_wr),
+    .address(csr_addr),
+    .wrdata(csr_wrdata),
+    .out(csr_read),
+
+    // exposed regs (very frequent use)
+    // may use pipeline/multi-cycle to arbitrary access any reg before it's side effect affects
+    .o_mstatus(mstatus),
+    .o_mie(mie),
+    .o_mip(mip),
+    .o_mtvec(mtvec),
+    .o_mcause(mcause)
 );
 
 alu alu_u0(

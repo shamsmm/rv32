@@ -52,4 +52,40 @@ typedef struct packed {
     bit [6:0] opcode;
 } jtype;
 
+typedef struct packed {
+    bit SD;
+    bit [30:25] WPRI0;
+    bit SDT;
+    bit SPELP;
+    bit TSR;
+    bit TW;
+    bit TVM;
+    bit MXR;
+    bit SUM;
+    bit MPRV;
+    bit [1:0] XS;
+    bit [1:0] FS;
+    bit [1:0] MPP;
+    bit [1:0] VS;
+    bit SPP;
+    bit MPIE;
+    bit UBE;
+    bit SPIE;
+    bit WPRI1;
+    bit MIE;
+    bit WPRI2;
+    bit SIE;
+    bit WPRI3;
+} mstatus_t;
+
+typedef struct packed {
+    bit [31:2] base;
+    bit [1:0] mode;
+} mtvec_t;
+
+typedef struct packed {
+    bit interr;
+    bit [30:0] code;
+} mcause_t;
+
 endpackage
