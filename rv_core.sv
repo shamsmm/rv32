@@ -410,6 +410,8 @@ always_comb
         default: rf_wrdata = 32'b0;
     endcase
 
+// rf_rs*, rf_rd IF/ID
+// rf_wr, rf_wrdata imm (IF/ID) or csr (EX/MA) or mem (MA/WB)
 rf rf_u0(
     .clk(clk),
     .rst_n(rst_n),
@@ -440,6 +442,8 @@ csr csr_u0(
     .o_mcause(mcause)
 );
 
+// mopcode, imm, funct* -- IF/ID
+// rf_r1, rf_r2 -- EX
 alu alu_u0(
     .in1(rf_r1), // always
     .in2((mopcode == OP_IMM) ? $signed({{20{itype_i.imm[31]}}, itype_i.imm}) : rf_r2),
