@@ -197,8 +197,6 @@ always_comb begin
     mem_wr = 1'b0;
     mem_rd = 1'b0;
 
-    branch = 0;
-
     id_imm = 1'b0;
     alu_funct7 = 7'b0;
     alu_funct3 = 3'b0;
@@ -207,7 +205,6 @@ always_comb begin
 
     csr_addr = 0;
     csr_wr = 0;
-    csr_wrdata = 0;
 
     tsize = WORD;
 
@@ -296,17 +293,6 @@ always_comb begin
                         rf_rs2 = btype_i.rs2;
                         alu_funct7 = 7'b0100000; // subtract
                         alu_funct3 = 3'b000; // subtract
-
-                        case(btype_i.funct3)
-                            3'b000: branch = (alu_out_z); // BEQ
-                            3'b001: branch = !(alu_out_z); // BNEQ
-                            3'b100: branch = (alu_out_n ^ alu_out_overflow); // BLT
-                            3'b101: branch = !(alu_out_n ^ alu_out_overflow); // BGE
-                            3'b110: branch = !alu_out_c; // BLTU
-                            3'b111: branch = alu_out_c; // BGEU
-                        endcase
-                        
-                        
                     end
                     3'b001: begin // JALR
                         mopcode = JALR;
@@ -333,27 +319,21 @@ always_comb begin
                         case(itype_i.funct3)
                             `CSRRW: begin
                                 csr_wr = 1;
-                                csr_wrdata = rf_r1;
                             end
                             `CSRRS: begin
                                 csr_wr = itype_i.rs1 != 0;
-                                csr_wrdata = csr_read | rf_r1;
                             end
                             `CSRRC: begin
                                 csr_wr = itype_i.rs1 != 0;
-                                csr_wrdata = csr_read & (~rf_r1);
                             end
                             `CSRRWI: begin
                                 csr_wr = 1;
-                                csr_wrdata = {27'b0, itype_i.rs1};
                             end
                             `CSRRSI: begin
                                 csr_wr = itype_i.rs1 != 0;
-                                csr_wrdata = csr_read | {27'b0, itype_i.rs1};
                             end
                             `CSRRCI: begin
                                 csr_wr = itype_i.rs1 != 0;
-                                csr_wrdata = csr_read & {27'b0, (~itype_i.rs1)};
                             end
                         endcase
                     end
@@ -363,7 +343,9 @@ always_comb begin
         endcase
 end
 
+// input EX/MA
 // memory access address
+// TODO: use ALU if free to calculate
 always_comb
     case(mopcode)
         LOAD: mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
@@ -371,6 +353,7 @@ always_comb
         default: mem_addr = 32'b0;
     endcase
 
+// input EX/MA
 // pc write
 always_comb
     case(mopcode)
@@ -387,6 +370,49 @@ always_comb
         JAL: next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
         default: next_pc = pc + 4;
     endcase
+
+// Branch
+// input EX/MA
+always_comb begin
+    branch = 0;
+
+    if (mopcode == BRANCH)
+        case(btype_i.funct3)
+            3'b000: branch = (alu_out_z); // BEQ
+            3'b001: branch = !(alu_out_z); // BNEQ
+            3'b100: branch = (alu_out_n ^ alu_out_overflow); // BLT
+            3'b101: branch = !(alu_out_n ^ alu_out_overflow); // BGE
+            3'b110: branch = !alu_out_c; // BLTU
+            3'b111: branch = alu_out_c; // BGEU
+        endcase
+end
+
+// CSRs write
+always_comb begin
+    csr_wrdata = 0;
+
+    if(mopcode == SYSTEM)
+        case(itype_i.funct3)
+            `CSRRW: begin
+                csr_wrdata = rf_r1;
+            end
+            `CSRRS: begin
+                csr_wrdata = csr_read | rf_r1;
+            end
+            `CSRRC: begin
+                csr_wrdata = csr_read & (~rf_r1);
+            end
+            `CSRRWI: begin
+                csr_wrdata = {27'b0, itype_i.rs1};
+            end
+            `CSRRSI: begin
+                csr_wrdata = csr_read | {27'b0, itype_i.rs1};
+            end
+            `CSRRCI: begin
+                csr_wrdata = csr_read & {27'b0, (~itype_i.rs1)};
+            end
+        endcase
+end
 
 // register file write
 always_comb
@@ -415,11 +441,17 @@ always_comb
 rf rf_u0(
     .clk(clk),
     .rst_n(rst_n),
+
+    // input IF/ID
     .rs1(rf_rs1),
     .rs2(rf_rs2),
     .rd(rf_rd),
+
+    // input MA/WB
     .wr((state == WB) ? rf_wr : 1'b0), // state changing
     .wrdata(rf_wrdata),
+
+    // output ID/EX
     .r1(rf_r1),
     .r2(rf_r2)
 );
@@ -428,9 +460,16 @@ csr csr_u0(
     .clk(clk),
     .rst_n(rst_n),
 
+    // input EX/MA
     .wr(csr_wr),
+
+    // input ID/EX
     .address(csr_addr),
+
+    // input EX/MA
     .wrdata(csr_wrdata),
+
+    // output EX/MA
     .out(csr_read),
 
     // exposed regs (very frequent use)
@@ -442,18 +481,22 @@ csr csr_u0(
     .o_mcause(mcause)
 );
 
-// mopcode, imm, funct* -- IF/ID
-// rf_r1, rf_r2 -- EX
 alu alu_u0(
+    // input ID/EX
     .in1(rf_r1), // always
     .in2((mopcode == OP_IMM) ? $signed({{20{itype_i.imm[31]}}, itype_i.imm}) : rf_r2),
     .use_shamt(mopcode == OP_IMM),
     .shamt(itype_i.imm[24:20]),
+
+    
+    // output EX/MA
     .out(alu_out),
     .carry(alu_out_c),
     .negative(alu_out_n),
     .zero(alu_out_z),
     .overflow(alu_out_overflow),
+
+    // input ID/EX
     .funct3(alu_funct3),
     .funct7(alu_funct7)
 );
