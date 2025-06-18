@@ -73,27 +73,22 @@ always_comb
 //        endcase
 //end
 
-always_comb begin
-    ibus.bstart = 1; // Always keep fetching instructions until pipeline flush
-end
-
-localparam bit [31:0] NOP = 0;
-
 logic [31:0] pc, next_pc;
 
 always_comb begin
+    ibus.bstart = 1; // Always keep fetching instructions until pipeline flush
     ibus.breq = 1'b1;
     ibus.ttype = READ;
     ibus.tsize = WORD;
-    ibus.addr = pc;
     ibus.wdata = 32'b0;
+    pc = ibus.addr;
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
-        pc <= INITIAL_PC;
-    else
-        pc <= next_pc;
+        ibus.addr <= INITIAL_PC;
+    else if (ibus.bdone)
+        ibus.addr <= next_pc; // only attempt new ibus transfer when bus done previous
 end
 
 always_ff @(posedge clk) begin
@@ -101,7 +96,6 @@ always_ff @(posedge clk) begin
         instruction <= ibus.rdata;
 end
 
-// IF
 logic [31:0] instruction;
 
 struct {
@@ -187,16 +181,12 @@ logic [31:0] csr_read;
 
 always_comb begin
     dbus.wdata = ex_ma.rf_r2; // always writing from data in register
-    dbus.breq = 1'b1;
+    dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
+    dbus.ttype = ex_ma.ttype;
+    dbus.breq = dbus.bstart; // TODO: breq and bstart are same? either have clear sepearion in logic or collapse into one
     dbus.addr = ex_ma.mem_addr;
     ma_wb.mem_rdata = dbus.rdata;
     dbus.tsize = ex_ma.tsize;
-end
-
-// state changing
-always_comb begin
-    dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
-    dbus.ttype = ex_ma.ttype;
 end
 
 
