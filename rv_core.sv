@@ -25,10 +25,9 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input bit irq_timer = 1'b0
 );
 
-// rv_core_csr zicsr(.csr_*)
-
 enum logic [2:0] {RESET, NORMAL, HALTING, HALTED, RESUMING} hstate, next_hstate; // hart state for DM
 
+/// FSM for DM
 always_ff @(posedge clk, negedge rst_n) begin
     if (!rst_n)
         hstate <= RESET;
@@ -37,38 +36,45 @@ always_ff @(posedge clk, negedge rst_n) begin
     end
 end
 
+logic halted; // TODO: wire up to pipeline
+
 always_comb
     case(hstate)
         RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
         NORMAL: next_hstate = haltreq ? HALTING : NORMAL;
-        HALTING: next_hstate = (state == WB) ? HALTED : NORMAL; // halt next after writing back (IF phase)
+        HALTING: next_hstate = (halted) ? HALTED : NORMAL; // halt next after writing back (IF phase)
         HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
         RESUMING: next_hstate = NORMAL;
         default: next_hstate = NORMAL;
     endcase
 
-enum logic [1:0] {IF, EX, MA, WB} state, next_state;
+// Multicycle RV32
+// enum logic [1:0] {IF, EX, MA, WB} state, next_state;
 
-always_ff @(posedge clk or negedge rst_n)
-    if(!rst_n)
-        state <= IF;
-    else
-        state <= next_state;
+//always_ff @(posedge clk or negedge rst_n)
+//    if(!rst_n)
+//        state <= IF;
+//    else
+//        state <= next_state;
 
-always_comb begin 
-    next_state = IF;
-    ibus.bstart = 1'b0;
+//always_comb begin 
+//    next_state = IF;
+//    ibus.bstart = 1'b0;
+//
+//    if (!(hstate == HALTED)) // gaurantee to halt only on Instruction Fetch
+//        case(state)
+//            IF: begin 
+//                ibus.bstart = 1'b1;
+//                next_state = ibus.bdone ? EX : IF; 
+//            end
+//            EX: next_state = (mem_wr | mem_rd) ? MA : WB;
+//            MA: next_state = dbus.bdone ? WB : MA;
+//            WB: next_state = IF;
+//        endcase
+//end
 
-    if (!(hstate == HALTED)) // gaurantee to halt only on Instruction Fetch
-        case(state)
-            IF: begin 
-                ibus.bstart = 1'b1;
-                next_state = ibus.bdone ? EX : IF; 
-            end
-            EX: next_state = (mem_wr | mem_rd) ? MA : WB;
-            MA: next_state = dbus.bdone ? WB : MA;
-            WB: next_state = IF;
-        endcase
+always_comb begin
+    ibus.bstart = 1; // Always keep fetching instructions until pipeline flush
 end
 
 localparam bit [31:0] NOP = 0;
@@ -86,41 +92,63 @@ end
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         pc <= INITIAL_PC;
-    else if (state == WB) // last state
+    else
         pc <= next_pc;
 end
 
 always_ff @(posedge clk) begin
-    if (state == IF && ibus.bdone)
+    if (ibus.bdone)
         instruction <= ibus.rdata;
 end
 
 // IF
 logic [31:0] instruction;
 
-// ID
+struct {
+    logic [4:0] rf_rs1;
+    logic [4:0] rf_rs2;
+    logic [4:0] rf_rd;
+} if_id;
 
-// EX
+struct {
+    logic [31:0] rf_r1;
+    logic [31:0] rf_r2;
+    logic [11:0] csr_addr;
+    mopcode_t mopcode;
+    logic [2:0] alu_funct3;
+    logic [6:0] alu_funct7;
+    logic [31:20] itype_imm;
+} id_ex;
 
-// MA
+struct {
+    logic [31:0] rf_r2;
+    logic [31:0] mem_addr;
+    tsize_e tsize;
+    ttype_e ttype;
+    logic mem_rd;
+    logic mem_wr;
+    logic [31:0] csr_read;
+    logic [31:0] alu_out;
+    logic alu_out_c;
+    logic alu_out_n;
+    logic alu_out_overflow;
+    logic alu_out_z;
+} ex_ma;
 
-// WB
+struct {
+    logic [31:0] mem_rdata;
+    logic rf_wr;
+    logic [31:0] rf_wrdata;
+    logic csr_wr;
+    logic [31:0] csr_wrdata;
+} ma_wb;
 
-rtype rtype_i;
-itype itype_i;
-stype stype_i;
-btype btype_i;
-utype utype_i;
-jtype jtype_i;
-
-always_comb begin
-    rtype_i = instruction;
-    itype_i = instruction;
-    stype_i = instruction;
-    btype_i = instruction;
-    utype_i = instruction;
-    jtype_i = instruction; 
-end
+rtype rtype_i = instruction;
+itype itype_i = instruction;
+stype stype_i = instruction;
+btype btype_i = instruction;
+utype utype_i = instruction;
+jtype jtype_i = instruction;
 
 logic [6:0] opcode;
 
@@ -158,31 +186,22 @@ logic [31:0] csr_read;
 
 
 always_comb begin
-    dbus.wdata = rf_r2; // always writing from data in register
+    dbus.wdata = ex_ma.rf_r2; // always writing from data in register
     dbus.breq = 1'b1;
-    dbus.addr = mem_addr;
-    mem_rdata = dbus.rdata;
-    dbus.tsize = tsize;
+    dbus.addr = ex_ma.mem_addr;
+    ma_wb.mem_rdata = dbus.rdata;
+    dbus.tsize = ex_ma.tsize;
 end
 
 // state changing
 always_comb begin
-    dbus.bstart = 1'b0;
-    dbus.ttype = READ;
-
-    if (state == MA) begin
-        if (mem_wr) begin
-            dbus.bstart = 1'b1;
-            dbus.ttype = WRITE;
-        end else if (mem_rd) begin
-            dbus.bstart = 1'b1;
-            dbus.ttype = READ;
-        end
-    end
+    dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
+    dbus.ttype = ex_ma.ttype;
 end
 
 
-enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, STORE, STORE_FP, custom_1, AMO, OP, LUI, OP_32, MADD, MSUB, NMSUB, NMADD, OP_FP, OP_V, custom_2, BRANCH, JALR, JAL, SYSTEM, OP_VE, custom_3, UNKNOWN} mopcode; // major opcode
+typedef enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, STORE, STORE_FP, custom_1, AMO, OP, LUI, OP_32, MADD, MSUB, NMSUB, NMADD, OP_FP, OP_V, custom_2, BRANCH, JALR, JAL, SYSTEM, OP_VE, custom_3, UNKNOWN} mopcode_t;
+mopcode_t mopcode; // major opcode
 
 always_comb begin
     mopcode = UNKNOWN;
@@ -443,17 +462,17 @@ rf rf_u0(
     .rst_n(rst_n),
 
     // input IF/ID
-    .rs1(rf_rs1),
-    .rs2(rf_rs2),
-    .rd(rf_rd),
+    .rs1(if_id.rf_rs1),
+    .rs2(if_id.rf_rs2),
+    .rd(if_id.rf_rd),
 
     // input MA/WB
-    .wr((state == WB) ? rf_wr : 1'b0), // state changing
-    .wrdata(rf_wrdata),
+    .wr(ma_wb.rf_wr), // state changing
+    .wrdata(ma_wb.rf_wrdata),
 
     // output ID/EX
-    .r1(rf_r1),
-    .r2(rf_r2)
+    .r1(id_ex.rf_r1),
+    .r2(id_ex.rf_r2)
 );
 
 csr csr_u0(
@@ -461,16 +480,16 @@ csr csr_u0(
     .rst_n(rst_n),
 
     // input EX/MA
-    .wr(csr_wr),
+    .wr(ma_wb.csr_wr),
 
     // input ID/EX
-    .address(csr_addr),
+    .address(id_ex.csr_addr),
 
-    // input EX/MA
-    .wrdata(csr_wrdata),
+    // input MA/WB
+    .wrdata(ma_wb.csr_wrdata),
 
     // output EX/MA
-    .out(csr_read),
+    .out(ex_ma.csr_read),
 
     // exposed regs (very frequent use)
     // may use pipeline/multi-cycle to arbitrary access any reg before it's side effect affects
@@ -483,22 +502,22 @@ csr csr_u0(
 
 alu alu_u0(
     // input ID/EX
-    .in1(rf_r1), // always
-    .in2((mopcode == OP_IMM) ? $signed({{20{itype_i.imm[31]}}, itype_i.imm}) : rf_r2),
-    .use_shamt(mopcode == OP_IMM),
-    .shamt(itype_i.imm[24:20]),
+    .in1(id_ex.rf_r1), // always
+    .in2((id_ex.mopcode == OP_IMM) ? $signed({{20{id_ex.itype_imm[31]}}, id_ex.itype_imm}) : id_ex.rf_r2),
+    .use_shamt(id_ex.mopcode == OP_IMM),
+    .shamt(id_ex.itype_imm[24:20]),
 
     
     // output EX/MA
-    .out(alu_out),
-    .carry(alu_out_c),
-    .negative(alu_out_n),
-    .zero(alu_out_z),
-    .overflow(alu_out_overflow),
+    .out(ex_ma.alu_out),
+    .carry(ex_ma.alu_out_c),
+    .negative(ex_ma.alu_out_n),
+    .zero(ex_ma.alu_out_z),
+    .overflow(ex_ma.alu_out_overflow),
 
     // input ID/EX
-    .funct3(alu_funct3),
-    .funct7(alu_funct7)
+    .funct3(id_ex.alu_funct3),
+    .funct7(id_ex.alu_funct7)
 );
 
 endmodule
