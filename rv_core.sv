@@ -357,31 +357,33 @@ end
 // TODO: use ALU if free to calculate
 always_comb
     case(mopcode)
-        LOAD: mem_addr = rf_r1 + $signed({{20{itype_i.imm[31]}},itype_i.imm});
-        STORE: mem_addr = rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
-        default: mem_addr = 32'b0;
+        LOAD: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{id_ex.itype_imm[31]}},id_ex.itype_imm});
+        STORE: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{id_ex.stype_imm_b11_5[31]}},id_ex.stype_imm_b11_5, id_ex.stype_imm_b4_0});
+        default: ex_ma.mem_addr = 32'b0;
     endcase
 
 // input EX/MA
 // pc write
 always_comb
-    case(mopcode)
+    case(ex_ma.mopcode)
         BRANCH: begin 
-            if (branch)
-                next_pc = pc + $signed({{19{btype_i.imm_b12}}, btype_i.imm_b12, btype_i.imm_b11, btype_i.imm_b10_5, btype_i.imm_b4_1, 1'b0});
+            if (ex_ma.branch)
+                ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma.btype_imm_b12}}, ex_ma.btype_imm_b12, ex_ma.btype_imm_b11, ex_ma.btype_imm_b10_5, ex_ma.btype_imm_b4_1, 1'b0});
             else
-                next_pc = pc + 4;
+                ma_wb.next_pc = ex_ma.pc + 4; // default
         end
         JALR: begin
-            next_pc = $signed({{20{itype_i.imm[31]}}, itype_i.imm}) + rf_r1;
-            next_pc[0] = 1'b0;
+            ma_wb.next_pc = $signed({{20{ex_ma.itype_imm[31]}}, ex_ma.itype_imm}) + ex_ma.rf_r1;
+            ma_wb.next_pc[0] = 1'b0;
         end
-        JAL: next_pc = pc + $signed({{11{jtype_i.imm_b20}}, jtype_i.imm_b20, jtype_i.imm_b19_12, jtype_i.imm_b11,jtype_i.imm_b10_1, 1'b0});
-        default: next_pc = pc + 4;
+        JAL: begin
+            ma_wb.next_pc = ex_ma.pc + $signed({{11{ex_ma.jtype_imm_b20}}, ex_ma.jtype_imm_b20, ex_ma.jtype_imm_b19_12, ex_ma.jtype_imm_b11, ex_ma.jtype_imm_b10_1, 1'b0});
+        end
+        default: ma_wb.next_pc = ex_ma.pc + 4;
     endcase
 
 // Branch
-// input EX/MA
+// Control Unit
 always_comb begin
     branch = 0;
 
@@ -397,51 +399,52 @@ always_comb begin
 end
 
 // CSRs write
+// EX/MA
 always_comb begin
-    csr_wrdata = 0;
+    ma_wb.csr_wrdata = 0;
 
     if(mopcode == SYSTEM)
         case(itype_i.funct3)
             `CSRRW: begin
-                csr_wrdata = rf_r1;
+                ma_wb.csr_wrdata = ex_ma.rf_r1;
             end
             `CSRRS: begin
-                csr_wrdata = csr_read | rf_r1;
+                ma_wb.csr_wrdata = ex_ma.csr_read | ex_ma.rf_r1;
             end
             `CSRRC: begin
-                csr_wrdata = csr_read & (~rf_r1);
+                ma_wb.csr_wrdata = ex_ma.csr_read & (~ex_ma.rf_r1);
             end
             `CSRRWI: begin
-                csr_wrdata = {27'b0, itype_i.rs1};
+                ma_wb.csr_wrdata = {27'b0, ex_ma.itype_rs1};
             end
             `CSRRSI: begin
-                csr_wrdata = csr_read | {27'b0, itype_i.rs1};
+                ma_wb.csr_wrdata = ex_ma.csr_read | {27'b0, ex_ma.itype_rs1};
             end
             `CSRRCI: begin
-                csr_wrdata = csr_read & {27'b0, (~itype_i.rs1)};
+                ma_wb.csr_wrdata = ex_ma.csr_read & {27'b0, (~ex_ma.itype_rs1)};
             end
         endcase
 end
 
 // register file write
 always_comb
-    case(mopcode)
+    case(ma_wb.mopcode)
         LOAD: 
-            case(itype_i.funct3)
-                3'b000: rf_wrdata = {{24{mem_rdata[7]}}, mem_rdata[7:0]}; // LB
-                3'b001: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LH
-                3'b010: rf_wrdata = mem_rdata; // LW
-                3'b100: rf_wrdata = {{24{1'b0}}, mem_rdata[7:0]}; // LBU
-                3'b101: rf_wrdata = {{16{mem_rdata[15]}}, mem_rdata[15:0]}; // LHU
+            case(ma_wb.itype_funct3)
+                3'b000: rf_wrdata = {{24{ma_wb.mem_rdata[7]}}, ma_wb.mem_rdata[7:0]}; // LB
+                3'b001: rf_wrdata = {{16{ma_wb.mem_rdata[15]}}, ma_wb.mem_rdata[15:0]}; // LH
+                3'b010: rf_wrdata = ma_wb.mem_rdata; // LW
+                3'b100: rf_wrdata = {{24{1'b0}}, ma_wb.mem_rdata[7:0]}; // LBU
+                3'b101: rf_wrdata = {{16{ma_wb.mem_rdata[15]}}, ma_wb.mem_rdata[15:0]}; // LHU
                 default: rf_wrdata = 32'b0;
             endcase
-        OP_IMM: rf_wrdata = alu_out;
-        AUIPC: rf_wrdata = {utype_i.imm, {12{1'b0}}} + pc;
-        OP: rf_wrdata = alu_out;
-        LUI: rf_wrdata = {utype_i.imm, {12{1'b0}}};
-        JALR: rf_wrdata = pc + 4;
-        JAL: rf_wrdata = pc + 4;
-        SYSTEM: rf_wrdata = csr_read;
+        OP_IMM: rf_wrdata = ma_wb.alu_out;
+        AUIPC: rf_wrdata = {ma_wb.utype_imm, {12{1'b0}}} + ma_wb.pc;
+        OP: rf_wrdata = ma_wb.alu_out;
+        LUI: rf_wrdata = {ma_wb.utype_imm, {12{1'b0}}};
+        JALR: rf_wrdata = ma_wb.pc + 4;
+        JAL: rf_wrdata = ma_wb.pc + 4;
+        SYSTEM: rf_wrdata = ma_wb.csr_read;
         default: rf_wrdata = 32'b0;
     endcase
 
