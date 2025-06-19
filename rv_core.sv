@@ -186,6 +186,7 @@ itype id_ex_itype_i = id_ex.instruction;
 btype ex_ma_btype_i = ex_ma.instruction;
 jtype ex_ma_jtype_i = ex_ma.instruction;
 itype ex_ma_itype_i = ex_ma.instruction;
+stype ex_ma_stype_i = ex_ma.instruction;
 
 itype ma_wb_itype_i = ma_wb.instruction;
 utype ma_wb_utype_i = ma_wb.instruction;
@@ -234,6 +235,8 @@ typedef enum logic [4:0] {
 
 mopcode_t mopcode; // major opcode
 
+// Control Unit
+// IF/ID (default)
 always_comb begin
     opcode = instruction[6:0];
 
@@ -392,46 +395,17 @@ always_comb begin
 end
 
 // input EX/MA
-// memory access address
+// memory access address, branching, alu, csr
 // TODO: use ALU if free to calculate
 always_comb begin
-    stype stype_i = stype'(id_ex.instruction);
-    itype itype_i = itype'(id_ex.instruction);
+    ex_ma.alu_out = alu_out;
+    ex_ma.alu_out_c = alu_out_c;
+    ex_ma.alu_out_n = alu_out_n;
+    ex_ma.alu_out_z = alu_out_z;
+    ex_ma.alu_out_overflow = alu_out_overflow;
 
-    case(mopcode)
-        LOAD: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{itype_i.imm[31]}}, itype_i.imm});
-        STORE: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
-        default: ex_ma.mem_addr = 32'b0;
-    endcase
-end
+    ex_ma.csr_read = csr_read;
 
-// input EX/MA
-// pc write and memory read
-always_comb begin
-    ma_wb.mem_rdata = dbus.rdata;
-
-    case(ex_ma.instruction[6:2])
-        BRANCH: begin 
-            if (ex_ma.branch)
-                ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma_btype_i.imm_b12}}, ex_ma_btype_i.imm_b12, ex_ma_btype_i.imm_b11, ex_ma_btype_i.imm_b10_5, ex_ma_btype_i.imm_b4_1, 1'b0});
-            else
-                ma_wb.next_pc = ex_ma.pc + 4; // default
-        end
-        JALR: begin
-            ma_wb.next_pc = $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) + ex_ma.rf_r1;
-            ma_wb.next_pc[0] = 1'b0;
-        end
-        JAL: begin
-            ma_wb.next_pc = ex_ma.pc + $signed({{11{ex_ma_jtype_i.imm_b20}}, ex_ma_jtype_i.imm_b20, ex_ma_jtype_i.imm_b19_12, ex_ma_jtype_i.imm_b11, ex_ma_jtype_i.imm_b10_1, 1'b0});
-        end
-        default: ma_wb.next_pc = ex_ma.pc + 4;
-    endcase
-end
-
-// Branch
-// Combinational for ID/EX
-
-always_comb begin
     ex_ma.branch = 0;
 
     if (ex_ma.instruction[6:2] == BRANCH)
@@ -443,11 +417,19 @@ always_comb begin
             3'b110: ex_ma.branch = !ex_ma.alu_out_c; // BLTU
             3'b111: ex_ma.branch = ex_ma.alu_out_c; // BGEU
         endcase
+
+    case(mopcode)
+        LOAD: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm});
+        STORE: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{ex_ma_stype_i.imm_b11_5[31]}},ex_ma_stype_i.imm_b11_5, ex_ma_stype_i.imm_b4_0});
+        default: ex_ma.mem_addr = 32'b0;
+    endcase
 end
 
-// CSRs write
-// EX/MA
+// input EX/MA
+// pc write and memory read and CSRs
 always_comb begin
+    ma_wb.mem_rdata = dbus.rdata;
+
     ma_wb.csr_wrdata = 0;
 
     if(ma_wb.instruction[6:2] == SYSTEM)
@@ -471,6 +453,23 @@ always_comb begin
                 ma_wb.csr_wrdata = ex_ma.csr_read & {27'b0, (~ex_ma_itype_i.rs1)};
             end
         endcase
+
+    case(ex_ma.instruction[6:2])
+        BRANCH: begin 
+            if (ex_ma.branch)
+                ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma_btype_i.imm_b12}}, ex_ma_btype_i.imm_b12, ex_ma_btype_i.imm_b11, ex_ma_btype_i.imm_b10_5, ex_ma_btype_i.imm_b4_1, 1'b0});
+            else
+                ma_wb.next_pc = ex_ma.pc + 4; // default
+        end
+        JALR: begin
+            ma_wb.next_pc = $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) + ex_ma.rf_r1;
+            ma_wb.next_pc[0] = 1'b0;
+        end
+        JAL: begin
+            ma_wb.next_pc = ex_ma.pc + $signed({{11{ex_ma_jtype_i.imm_b20}}, ex_ma_jtype_i.imm_b20, ex_ma_jtype_i.imm_b19_12, ex_ma_jtype_i.imm_b11, ex_ma_jtype_i.imm_b10_1, 1'b0});
+        end
+        default: ma_wb.next_pc = ex_ma.pc + 4;
+    endcase
 end
 
 // register file write
@@ -529,7 +528,7 @@ csr csr_u0(
     .wrdata(ma_wb.csr_wrdata),
 
     // output EX/MA
-    .out(ex_ma.csr_read),
+    .out(csr_read),
 
     // exposed regs (very frequent use)
     // may use pipeline/multi-cycle to arbitrary access any reg before it's side effect affects
@@ -549,11 +548,11 @@ alu alu_u0(
 
     
     // output EX/MA
-    .out(ex_ma.alu_out),
-    .carry(ex_ma.alu_out_c),
-    .negative(ex_ma.alu_out_n),
-    .zero(ex_ma.alu_out_z),
-    .overflow(ex_ma.alu_out_overflow),
+    .out(alu_out),
+    .carry(alu_out_c),
+    .negative(alu_out_n),
+    .zero(alu_out_z),
+    .overflow(alu_out_overflow),
 
     // input ID/EX
     .funct3(id_ex.alu_funct3),
