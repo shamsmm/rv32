@@ -74,8 +74,11 @@ end
 logic [31:0] instruction;
 
 
+// TODO: use modports with interfaces if this makes it more readible
+
 struct {
     logic [31:0] instruction;
+    logic [31:0] pc;
 
     // intrinsic
     logic [4:0] rf_rs1;
@@ -85,29 +88,25 @@ struct {
 
 struct {
     logic [31:0] instruction;
+    logic [31:0] pc;
 
+    logic [2:0] alu_funct3;
+    logic [6:0] alu_funct7;
     logic [31:0] rf_r1;
     logic [31:0] rf_r2;
     logic [11:0] csr_addr;
-    mopcode_t mopcode;
-    logic [2:0] alu_funct3;
-    logic [6:0] alu_funct7;
-    logic [31:20] itype_imm;
-    bit [31:25] stype_imm_b11_5;
 } id_ex;
 
 struct {
     logic [31:0] instruction;
+    logic [31:0] pc;
 
     // passed
-    mopcode_t mopcode;
     logic [31:0] rf_r1;
-    logic [19:15] itype_rs1;    
 
     
     // intrinsic
     logic [31:0] rf_r2;
-    logic [31:20] itype_imm;
     logic [31:0] mem_addr;
     tsize_e tsize;
     ttype_e ttype;
@@ -120,28 +119,14 @@ struct {
     logic alu_out_overflow;
     logic alu_out_z;
     logic branch;
-    
-    bit [19:12] jtype_imm_b19_12;
-    bit jtype_imm_b11;
-    bit jtype_imm_b20;
-    bit [30:21] jtype_imm_b10_1;
-
-
-    // to pass
-    logic [2:0] itype_funct3;
-    logic [31:12] utype_imm;
-    logic [31:0] pc;
 } ex_ma;
 
 struct {
     logic [31:0] instruction;
+    logic [31:0] pc;
 
     // passed
-    mopcode_t mopcode;
-    logic [2:0] itype_funct3;    
     logic [31:0] alu_out;
-    logic [31:12] utype_imm;
-    logic [31:0] pc;
     logic [31:0] csr_read;
 
 
@@ -196,9 +181,14 @@ logic [31:0] csr_wrdata;
 logic [31:0] csr_read;
 
 
+itype id_ex_itype_i = id_ex.instruction;
+
 btype ex_ma_btype_i = ex_ma.instruction;
 jtype ex_ma_jtype_i = ex_ma.instruction;
 itype ex_ma_itype_i = ex_ma.instruction;
+
+itype ma_wb_itype_i = ma_wb.instruction;
+utype ma_wb_utype_i = ma_wb.instruction;
 
 
 always_comb begin
@@ -207,16 +197,44 @@ always_comb begin
     dbus.ttype = ex_ma.ttype;
     dbus.breq = dbus.bstart; // TODO: breq and bstart are same? either have clear sepearion in logic or collapse into one
     dbus.addr = ex_ma.mem_addr;
-    
     dbus.tsize = ex_ma.tsize;
 end
 
 
-typedef enum logic [4:0] {LOAD, LOAD_FP, custom_0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, STORE, STORE_FP, custom_1, AMO, OP, LUI, OP_32, MADD, MSUB, NMSUB, NMADD, OP_FP, OP_V, custom_2, BRANCH, JALR, JAL, SYSTEM, OP_VE, custom_3, UNKNOWN} mopcode_t;
+typedef enum logic [4:0] {
+    LOAD        = 5'b00000,
+    LOAD_FP     = 5'b00001,
+    custom_0    = 5'b00010,
+    MISC_MEM    = 5'b00011,
+    OP_IMM      = 5'b00100,
+    AUIPC       = 5'b00101,
+    OP_IMM_32   = 5'b00110,
+    STORE       = 5'b01000,
+    STORE_FP    = 5'b01001,
+    custom_1    = 5'b01010,
+    AMO         = 5'b01011,
+    OP          = 5'b01100,
+    LUI         = 5'b01101,
+    OP_32       = 5'b01110,
+    MADD        = 5'b10000,
+    MSUB        = 5'b10001,
+    NMSUB       = 5'b10010,
+    NMADD       = 5'b10011,
+    OP_FP       = 5'b10100,
+    OP_V        = 5'b10101,
+    custom_2    = 5'b10110,
+    BRANCH      = 5'b11000,
+    JALR        = 5'b11001,
+    // reserved = 5'b11010,
+    JAL         = 5'b11011,
+    SYSTEM      = 5'b11100,
+    OP_VE       = 5'b11101,
+    custom_3    = 5'b11110
+} mopcode_t;
+
 mopcode_t mopcode; // major opcode
 
 always_comb begin
-    mopcode = UNKNOWN;
     opcode = instruction[6:0];
 
     // defaults
@@ -244,8 +262,7 @@ always_comb begin
             2'b00:
                 case(opcode[4:2])
                     3'b000: begin // LOAD
-                        mopcode = LOAD;
-
+                        assert (mopcode_t'(opcode[6:2]) == LOAD);
                         rf_rd = itype_i.rd;
                         rf_rs1 = itype_i.rs1;
                          
@@ -256,11 +273,11 @@ always_comb begin
                         mem_rd = 1'b1;
                         
                     end
-                    3'b001: mopcode = LOAD_FP; // LOAD-FP
-                    3'b010: mopcode = custom_0; // custom-0
-                    3'b011: mopcode = MISC_MEM; // MISC-MEM
+                    3'b001: assert (mopcode_t'(opcode[6:2]) == LOAD_FP); // LOAD-FP
+                    3'b010: assert (mopcode_t'(opcode[6:2]) == custom_0); // custom-0
+                    3'b011: assert (mopcode_t'(opcode[6:2]) == MISC_MEM); // MISC-MEM
                     3'b100: begin // OP-IMM
-                        mopcode = OP_IMM;
+                        assert (mopcode_t'(opcode[6:2]) == OP_IMM);
                         rf_rd = itype_i.rd;
                         rf_rs1 = itype_i.rs1;
                         rf_wr = 1'b1;
@@ -268,16 +285,16 @@ always_comb begin
                         alu_funct7 = alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
                     end
                     3'b101: begin // AUIPC
-                        mopcode = AUIPC;
+                        assert (mopcode_t'(opcode[6:2]) == AUIPC);
                         rf_wr = 1'b1;
                         rf_rd = utype_i.rd;
                     end
-                    3'b110: mopcode = OP_IMM_32; // OP-IMM-32
+                    3'b110: assert (mopcode_t'(opcode[6:2]) == OP_IMM_32); // OP-IMM-32
                 endcase
             2'b01:
                 case(opcode[4:2])
                     3'b000: begin // STORE
-                        mopcode = STORE;
+                        assert (mopcode_t'(opcode[6:2]) == STORE);
                         rf_rs1 = stype_i.rs1;
                         rf_rs2 = stype_i.rs2;
     
@@ -286,11 +303,11 @@ always_comb begin
 
                         tsize = tsize_e'(stype_i.funct3[14:12]);
                     end
-                    3'b001: mopcode = STORE_FP; // STORE-FP
-                    3'b010: mopcode = custom_1; // custom-1
-                    3'b011: mopcode = AMO; // AMO
+                    3'b001: assert (mopcode_t'(opcode[6:2]) == STORE_FP); // STORE-FP
+                    3'b010: assert (mopcode_t'(opcode[6:2]) == custom_1); // custom-1
+                    3'b011: assert (mopcode_t'(opcode[6:2]) == AMO); // AMO
                     3'b100: begin // OP
-                        mopcode = OP;
+                        assert (mopcode_t'(opcode[6:2]) == OP);
                         rf_rd = rtype_i.rd;
                         rf_rs1 = rtype_i.rs1;
                         rf_rs2 = rtype_i.rs2;
@@ -300,7 +317,7 @@ always_comb begin
                         alu_funct7 = rtype_i.funct7;
                     end
                     3'b101: begin // LUI
-                        mopcode = LUI;
+                        assert (mopcode_t'(opcode[6:2]) == LUI);
                         rf_wr = 1'b1;
                         rf_rd = utype_i.rd;
                     end
@@ -308,37 +325,37 @@ always_comb begin
                 endcase
             2'b10:
                 case(opcode[4:2])
-                    3'b000: mopcode = MADD; // MADD
-                    3'b001: mopcode = MSUB; // MSUB
-                    3'b010: mopcode = NMSUB; // NMSUB
-                    3'b011: mopcode = NMADD; // NMADD
-                    3'b100: mopcode = OP_FP; // OP-FP
-                    3'b101: mopcode = OP_V; // OP-V
-                    3'b110: mopcode = custom_2; // custom-2/RV128
+                    3'b000: assert (mopcode_t'(opcode[6:2]) == MADD); // MADD
+                    3'b001: assert (mopcode_t'(opcode[6:2]) == MSUB); // MSUB
+                    3'b010: assert (mopcode_t'(opcode[6:2]) == NMSUB); // NMSUB
+                    3'b011: assert (mopcode_t'(opcode[6:2]) == NMADD); // NMADD
+                    3'b100: assert (mopcode_t'(opcode[6:2]) == OP_FP); // OP-FP
+                    3'b101: assert (mopcode_t'(opcode[6:2]) == OP_V); // OP-V
+                    3'b110: assert (mopcode_t'(opcode[6:2]) == custom_2); // custom-2/RV128
                 endcase
             2'b11:
                 case(opcode[4:2])
                     3'b000: begin // BRANCH                     
-                        mopcode = BRANCH;
+                        assert (mopcode_t'(opcode[6:2]) == BRANCH);
                         rf_rs1 = btype_i.rs1;
                         rf_rs2 = btype_i.rs2;
                         alu_funct7 = 7'b0100000; // subtract
                         alu_funct3 = 3'b000; // subtract
                     end
                     3'b001: begin // JALR
-                        mopcode = JALR;
+                        assert (mopcode_t'(opcode[6:2]) == JALR);
                         rf_rs1 = itype_i.rs1;
                         rf_rd = itype_i.rd;
                         rf_wr = 1'b1;
                     end
                     3'b010: ; // reserved
                     3'b011: begin // JAL
-                        mopcode = JAL;
+                        assert (mopcode_t'(opcode[6:2]) == JAL);
                         rf_rd = jtype_i.rd;
                         rf_wr = 1'b1;
                     end
                     3'b100: begin // SYSTEM
-                        mopcode = SYSTEM; 
+                        assert (mopcode_t'(opcode[6:2]) == SYSTEM);
 
                         rf_wr = 1;
                         rf_rd = itype_i.rd;
@@ -368,8 +385,8 @@ always_comb begin
                             end
                         endcase
                     end
-                    3'b101: mopcode = OP_VE; // OP-VE
-                    3'b110: mopcode = custom_3; // custom-3/RV128
+                    3'b101: assert (mopcode_t'(opcode[6:2]) == OP_VE); // OP-VE
+                    3'b110: assert (mopcode_t'(opcode[6:2]) == custom_3); // custom-3/RV128
                 endcase
         endcase
 end
@@ -393,7 +410,7 @@ end
 always_comb begin
     ma_wb.mem_rdata = dbus.rdata;
 
-    case(ex_ma.mopcode)
+    case(ex_ma.instruction[6:2])
         BRANCH: begin 
             if (ex_ma.branch)
                 ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma_btype_i.imm_b12}}, ex_ma_btype_i.imm_b12, ex_ma_btype_i.imm_b11, ex_ma_btype_i.imm_b10_5, ex_ma_btype_i.imm_b4_1, 1'b0});
@@ -417,7 +434,7 @@ end
 always_comb begin
     ex_ma.branch = 0;
 
-    if (id_ex.mopcode == BRANCH)
+    if (ex_ma.instruction[6:2] == BRANCH)
         case(ex_ma_btype_i.funct3)
             3'b000: ex_ma.branch = (ex_ma.alu_out_z); // BEQ
             3'b001: ex_ma.branch = !(ex_ma.alu_out_z); // BNEQ
@@ -433,7 +450,7 @@ end
 always_comb begin
     ma_wb.csr_wrdata = 0;
 
-    if(ma_wb.mopcode == SYSTEM)
+    if(ma_wb.instruction[6:2] == SYSTEM)
         case(itype_i.funct3)
             `CSRRW: begin
                 ma_wb.csr_wrdata = ex_ma.rf_r1;
@@ -445,22 +462,22 @@ always_comb begin
                 ma_wb.csr_wrdata = ex_ma.csr_read & (~ex_ma.rf_r1);
             end
             `CSRRWI: begin
-                ma_wb.csr_wrdata = {27'b0, ex_ma.itype_rs1};
+                ma_wb.csr_wrdata = {27'b0, ex_ma_itype_i.rs1};
             end
             `CSRRSI: begin
-                ma_wb.csr_wrdata = ex_ma.csr_read | {27'b0, ex_ma.itype_rs1};
+                ma_wb.csr_wrdata = ex_ma.csr_read | {27'b0, ex_ma_itype_i.rs1};
             end
             `CSRRCI: begin
-                ma_wb.csr_wrdata = ex_ma.csr_read & {27'b0, (~ex_ma.itype_rs1)};
+                ma_wb.csr_wrdata = ex_ma.csr_read & {27'b0, (~ex_ma_itype_i.rs1)};
             end
         endcase
 end
 
 // register file write
 always_comb
-    case(ma_wb.mopcode)
+    case(ma_wb.instruction[6:2])
         LOAD: 
-            case(ma_wb.itype_funct3)
+            case(ma_wb_itype_i.funct3)
                 3'b000: rf_wrdata = {{24{ma_wb.mem_rdata[7]}}, ma_wb.mem_rdata[7:0]}; // LB
                 3'b001: rf_wrdata = {{16{ma_wb.mem_rdata[15]}}, ma_wb.mem_rdata[15:0]}; // LH
                 3'b010: rf_wrdata = ma_wb.mem_rdata; // LW
@@ -469,9 +486,9 @@ always_comb
                 default: rf_wrdata = 32'b0;
             endcase
         OP_IMM: rf_wrdata = ma_wb.alu_out;
-        AUIPC: rf_wrdata = {ma_wb.utype_imm, {12{1'b0}}} + ma_wb.pc;
+        AUIPC: rf_wrdata = {ma_wb_utype_i.imm, {12{1'b0}}} + ma_wb.pc;
         OP: rf_wrdata = ma_wb.alu_out;
-        LUI: rf_wrdata = {ma_wb.utype_imm, {12{1'b0}}};
+        LUI: rf_wrdata = {ma_wb_utype_i.imm, {12{1'b0}}};
         JALR: rf_wrdata = ma_wb.pc + 4;
         JAL: rf_wrdata = ma_wb.pc + 4;
         SYSTEM: rf_wrdata = ma_wb.csr_read;
@@ -526,9 +543,9 @@ csr csr_u0(
 alu alu_u0(
     // input ID/EX
     .in1(id_ex.rf_r1), // always
-    .in2((id_ex.mopcode == OP_IMM) ? $signed({{20{id_ex.itype_imm[31]}}, id_ex.itype_imm}) : id_ex.rf_r2),
-    .use_shamt(id_ex.mopcode == OP_IMM),
-    .shamt(id_ex.itype_imm[24:20]),
+    .in2((id_ex.instruction[6:2] == OP_IMM) ? $signed({{20{id_ex_itype_i.imm[31]}}, id_ex_itype_i.imm}) : id_ex.rf_r2),
+    .use_shamt(id_ex.instruction[6:2] == OP_IMM),
+    .shamt(id_ex_itype_i.imm[24:20]),
 
     
     // output EX/MA
