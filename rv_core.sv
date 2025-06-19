@@ -89,7 +89,7 @@ logic [31:0] instruction;
 
 // TODO: use modports with interfaces if this makes it more readible
 
-struct {
+struct packed {
     logic [31:0] instruction;
     logic [31:0] pc;
 
@@ -109,7 +109,7 @@ struct {
     tsize_e tsize;
 } if_id;
 
-struct {
+struct packed {
     logic [31:0] instruction;
     logic [31:0] pc;
 
@@ -120,7 +120,7 @@ struct {
     logic [11:0] csr_addr;
 } id_ex;
 
-struct {
+struct packed {
     logic [31:0] instruction;
     logic [31:0] pc;
 
@@ -144,7 +144,7 @@ struct {
     logic branch;
 } ex_ma;
 
-struct {
+struct packed {
     logic [31:0] instruction;
     logic [31:0] pc;
 
@@ -279,7 +279,7 @@ end
 
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
-        if_id = 0;
+        if_id <= 0;
     else if (!stall) begin
         if (opcode[1:0] == 2'b11)
             case(opcode[6:5])
@@ -287,14 +287,14 @@ always_ff @(posedge clk or negedge rst_n) begin
                     case(opcode[4:2])
                         3'b000: begin // LOAD
                             assert (mopcode_t'(opcode[6:2]) == LOAD);
-                            if_id.rf_rd = itype_i.rd;
-                            if_id.rf_rs1 = itype_i.rs1;
+                            if_id.rf_rd <= itype_i.rd;
+                            if_id.rf_rs1 <= itype_i.rs1;
                             
-                            if_id.rf_wr = 1'b1;
+                            if_id.rf_wr <= 1'b1;
                             
-                            if_id.tsize = tsize_e'(itype_i.funct3[14:12]); // by ISA
+                            if_id.tsize <= tsize_e'(itype_i.funct3[14:12]); // by ISA
 
-                            if_id.mem_rd = 1'b1;
+                            if_id.mem_rd <= 1'b1;
                             
                         end
                         3'b001: assert (mopcode_t'(opcode[6:2]) == LOAD_FP); // LOAD-FP
@@ -302,16 +302,16 @@ always_ff @(posedge clk or negedge rst_n) begin
                         3'b011: assert (mopcode_t'(opcode[6:2]) == MISC_MEM); // MISC-MEM
                         3'b100: begin // OP-IMM
                             assert (mopcode_t'(opcode[6:2]) == OP_IMM);
-                            if_id.rf_rd = itype_i.rd;
-                            if_id.rf_rs1 = itype_i.rs1;
-                            if_id.rf_wr = 1'b1;
-                            if_id.alu_funct3 = itype_i.funct3;
-                            if_id.alu_funct7 = alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
+                            if_id.rf_rd <= itype_i.rd;
+                            if_id.rf_rs1 <= itype_i.rs1;
+                            if_id.rf_wr <= 1'b1;
+                            if_id.alu_funct3 <= itype_i.funct3;
+                            if_id.alu_funct7 <= alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
                         end
                         3'b101: begin // AUIPC
                             assert (mopcode_t'(opcode[6:2]) == AUIPC);
-                            if_id.rf_wr = 1'b1;
-                            if_id.rf_rd = utype_i.rd;
+                            if_id.rf_wr <= 1'b1;
+                            if_id.rf_rd <= utype_i.rd;
                         end
                         3'b110: assert (mopcode_t'(opcode[6:2]) == OP_IMM_32); // OP-IMM-32
                     endcase
@@ -319,31 +319,31 @@ always_ff @(posedge clk or negedge rst_n) begin
                     case(opcode[4:2])
                         3'b000: begin // STORE
                             assert (mopcode_t'(opcode[6:2]) == STORE);
-                            if_id.rf_rs1 = stype_i.rs1;
-                            if_id.rf_rs2 = stype_i.rs2;
+                            if_id.rf_rs1 <= stype_i.rs1;
+                            if_id.rf_rs2 <= stype_i.rs2;
         
-                            if_id.mem_wr = 1'b1;
+                            if_id.mem_wr <= 1'b1;
                             
 
-                            if_id.tsize = tsize_e'(stype_i.funct3[14:12]);
+                            if_id.tsize <= tsize_e'(stype_i.funct3[14:12]);
                         end
                         3'b001: assert (mopcode_t'(opcode[6:2]) == STORE_FP); // STORE-FP
                         3'b010: assert (mopcode_t'(opcode[6:2]) == custom_1); // custom-1
                         3'b011: assert (mopcode_t'(opcode[6:2]) == AMO); // AMO
                         3'b100: begin // OP
                             assert (mopcode_t'(opcode[6:2]) == OP);
-                            if_id.rf_rd = rtype_i.rd;
-                            if_id.rf_rs1 = rtype_i.rs1;
-                            if_id.rf_rs2 = rtype_i.rs2;
-                            if_id.rf_wr = 1'b1;
+                            if_id.rf_rd <= rtype_i.rd;
+                            if_id.rf_rs1 <= rtype_i.rs1;
+                            if_id.rf_rs2 <= rtype_i.rs2;
+                            if_id.rf_wr <= 1'b1;
                             
-                            if_id.alu_funct3 = rtype_i.funct3;
-                            if_id.alu_funct7 = rtype_i.funct7;
+                            if_id.alu_funct3 <= rtype_i.funct3;
+                            if_id.alu_funct7 <= rtype_i.funct7;
                         end
                         3'b101: begin // LUI
                             assert (mopcode_t'(opcode[6:2]) == LUI);
-                            if_id.rf_wr = 1'b1;
-                            if_id.rf_rd = utype_i.rd;
+                            if_id.rf_wr <= 1'b1;
+                            if_id.rf_rd <= utype_i.rd;
                         end
                         3'b110: assert (mopcode_t'(opcode[6:2]) == OP_32); // OP-32
                     endcase
@@ -361,50 +361,50 @@ always_ff @(posedge clk or negedge rst_n) begin
                     case(opcode[4:2])
                         3'b000: begin // BRANCH                     
                             assert (mopcode_t'(opcode[6:2]) == BRANCH);
-                            if_id.rf_rs1 = btype_i.rs1;
-                            if_id.rf_rs2 = btype_i.rs2;
-                            if_id.alu_funct7 = 7'b0100000; // subtract
-                            if_id.alu_funct3 = 3'b000; // subtract
+                            if_id.rf_rs1 <= btype_i.rs1;
+                            if_id.rf_rs2 <= btype_i.rs2;
+                            if_id.alu_funct7 <= 7'b0100000; // subtract
+                            if_id.alu_funct3 <= 3'b000; // subtract
                         end
                         3'b001: begin // JALR
                             assert (mopcode_t'(opcode[6:2]) == JALR);
-                            if_id.rf_rs1 = itype_i.rs1;
-                            if_id.rf_rd = itype_i.rd;
-                            if_id.rf_wr = 1'b1;
+                            if_id.rf_rs1 <= itype_i.rs1;
+                            if_id.rf_rd <= itype_i.rd;
+                            if_id.rf_wr <= 1'b1;
                         end
                         3'b010: ; // reserved
                         3'b011: begin // JAL
                             assert (mopcode_t'(opcode[6:2]) == JAL);
-                            if_id.rf_rd = jtype_i.rd;
-                            if_id.rf_wr = 1'b1;
+                            if_id.rf_rd <= jtype_i.rd;
+                            if_id.rf_wr <= 1'b1;
                         end
                         3'b100: begin // SYSTEM
                             assert (mopcode_t'(opcode[6:2]) == SYSTEM);
 
-                            if_id.rf_wr = 1;
-                            if_id.rf_rd = itype_i.rd;
-                            if_id.rf_rs1 = itype_i.rs1;
+                            if_id.rf_wr <= 1;
+                            if_id.rf_rd <= itype_i.rd;
+                            if_id.rf_rs1 <= itype_i.rs1;
 
                             // zero extend csr_addr
 
                             case(itype_i.funct3)
                                 `CSRRW: begin
-                                    if_id.csr_wr = 1;
+                                    if_id.csr_wr <= 1;
                                 end
                                 `CSRRS: begin
-                                    if_id.csr_wr = itype_i.rs1 != 0;
+                                    if_id.csr_wr <= itype_i.rs1 != 0;
                                 end
                                 `CSRRC: begin
-                                    if_id.csr_wr = itype_i.rs1 != 0;
+                                    if_id.csr_wr <= itype_i.rs1 != 0;
                                 end
                                 `CSRRWI: begin
-                                    if_id.csr_wr = 1;
+                                    if_id.csr_wr <= 1;
                                 end
                                 `CSRRSI: begin
-                                    if_id.csr_wr = itype_i.rs1 != 0;
+                                    if_id.csr_wr <= itype_i.rs1 != 0;
                                 end
                                 `CSRRCI: begin
-                                    if_id.csr_wr = itype_i.rs1 != 0;
+                                    if_id.csr_wr <= itype_i.rs1 != 0;
                                 end
                             endcase
                         end
@@ -421,10 +421,10 @@ end
 
 always_ff @(posedge clk or negedge rst_n)
     if (!rst_n)
-        id_ex = 0;
+        id_ex <= 0;
     else if (!stall) begin
-        id_ex.rf_r1 = rf_r1;
-        id_ex.rf_r2 = rf_r1;
+        id_ex.rf_r1 <= rf_r1;
+        id_ex.rf_r2 <= rf_r1;
     end
 
 
@@ -435,32 +435,29 @@ always_ff @(posedge clk or negedge rst_n)
 // input ALU, CSR
 // memory access address, branching, alu, csr
 // TODO: use ALU if free to calculate
-always_comb begin
-    ex_ma.alu_out = alu_out;
-    ex_ma.alu_out_c = alu_out_c;
-    ex_ma.alu_out_n = alu_out_n;
-    ex_ma.alu_out_z = alu_out_z;
-    ex_ma.alu_out_overflow = alu_out_overflow;
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        ex_ma <= 0;
+    else if (!stall) begin
+        ex_ma.alu_out <= alu_out;
+        ex_ma.csr_read <= csr_read;
 
-    ex_ma.csr_read = csr_read;
+        if (ex_ma.instruction[6:2] == BRANCH)
+            case(ex_ma_btype_i.funct3)
+                3'b000: ex_ma.branch <= (alu_out_z); // BEQ
+                3'b001: ex_ma.branch <= !(alu_out_z); // BNEQ
+                3'b100: ex_ma.branch <= (alu_out_n ^ alu_out_overflow); // BLT
+                3'b101: ex_ma.branch <= !(alu_out_n ^ alu_out_overflow); // BGE
+                3'b110: ex_ma.branch <= !alu_out_c; // BLTU
+                3'b111: ex_ma.branch <= alu_out_c; // BGEU
+            endcase
 
-    ex_ma.branch = 0;
-
-    if (ex_ma.instruction[6:2] == BRANCH)
-        case(ex_ma_btype_i.funct3)
-            3'b000: ex_ma.branch = (ex_ma.alu_out_z); // BEQ
-            3'b001: ex_ma.branch = !(ex_ma.alu_out_z); // BNEQ
-            3'b100: ex_ma.branch = (ex_ma.alu_out_n ^ ex_ma.alu_out_overflow); // BLT
-            3'b101: ex_ma.branch = !(ex_ma.alu_out_n ^ ex_ma.alu_out_overflow); // BGE
-            3'b110: ex_ma.branch = !ex_ma.alu_out_c; // BLTU
-            3'b111: ex_ma.branch = ex_ma.alu_out_c; // BGEU
+        case(mopcode)
+            LOAD: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm});
+            STORE: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{ex_ma_stype_i.imm_b11_5[31]}},ex_ma_stype_i.imm_b11_5, ex_ma_stype_i.imm_b4_0});
+            default: ex_ma.mem_addr <= 32'b0;
         endcase
-
-    case(mopcode)
-        LOAD: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm});
-        STORE: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{ex_ma_stype_i.imm_b11_5[31]}},ex_ma_stype_i.imm_b11_5, ex_ma_stype_i.imm_b4_0});
-        default: ex_ma.mem_addr = 32'b0;
-    endcase
+    end
 end
 
 
@@ -468,51 +465,51 @@ end
 // MA/WB (input EX/MA)
 //-----------------------------------------------------------------------------
 
-// input EX/MA
 // pc write and memory read and CSRs
-always_comb begin
-    ma_wb.mem_rdata = dbus.rdata;
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        ma_wb <= 0;
+    else if (!stall) begin
+        ma_wb.mem_rdata <= dbus.rdata;
 
-    ma_wb.csr_wrdata = 0;
+        if(ma_wb.instruction[6:2] == SYSTEM)
+            case(itype_i.funct3)
+                `CSRRW: begin
+                    ma_wb.csr_wrdata <= ex_ma.rf_r1;
+                end
+                `CSRRS: begin
+                    ma_wb.csr_wrdata <= ex_ma.csr_read | ex_ma.rf_r1;
+                end
+                `CSRRC: begin
+                    ma_wb.csr_wrdata <= ex_ma.csr_read & (~ex_ma.rf_r1);
+                end
+                `CSRRWI: begin
+                    ma_wb.csr_wrdata <= {27'b0, ex_ma_itype_i.rs1};
+                end
+                `CSRRSI: begin
+                    ma_wb.csr_wrdata <= ex_ma.csr_read | {27'b0, ex_ma_itype_i.rs1};
+                end
+                `CSRRCI: begin
+                    ma_wb.csr_wrdata <= ex_ma.csr_read & {27'b0, (~ex_ma_itype_i.rs1)};
+                end
+            endcase
 
-    if(ma_wb.instruction[6:2] == SYSTEM)
-        case(itype_i.funct3)
-            `CSRRW: begin
-                ma_wb.csr_wrdata = ex_ma.rf_r1;
+        case(ex_ma.instruction[6:2])
+            BRANCH: begin 
+                if (ex_ma.branch)
+                    ma_wb.next_pc <= ex_ma.pc + $signed({{19{ex_ma_btype_i.imm_b12}}, ex_ma_btype_i.imm_b12, ex_ma_btype_i.imm_b11, ex_ma_btype_i.imm_b10_5, ex_ma_btype_i.imm_b4_1, 1'b0});
+                else
+                    ma_wb.next_pc <= ex_ma.pc + 4; // default
             end
-            `CSRRS: begin
-                ma_wb.csr_wrdata = ex_ma.csr_read | ex_ma.rf_r1;
+            JALR: begin
+                ma_wb.next_pc <= ($signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) + ex_ma.rf_r1) & 32'hfffffffe;
             end
-            `CSRRC: begin
-                ma_wb.csr_wrdata = ex_ma.csr_read & (~ex_ma.rf_r1);
+            JAL: begin
+                ma_wb.next_pc <= ex_ma.pc + $signed({{11{ex_ma_jtype_i.imm_b20}}, ex_ma_jtype_i.imm_b20, ex_ma_jtype_i.imm_b19_12, ex_ma_jtype_i.imm_b11, ex_ma_jtype_i.imm_b10_1, 1'b0});
             end
-            `CSRRWI: begin
-                ma_wb.csr_wrdata = {27'b0, ex_ma_itype_i.rs1};
-            end
-            `CSRRSI: begin
-                ma_wb.csr_wrdata = ex_ma.csr_read | {27'b0, ex_ma_itype_i.rs1};
-            end
-            `CSRRCI: begin
-                ma_wb.csr_wrdata = ex_ma.csr_read & {27'b0, (~ex_ma_itype_i.rs1)};
-            end
+            default: ma_wb.next_pc <= ex_ma.pc + 4;
         endcase
-
-    case(ex_ma.instruction[6:2])
-        BRANCH: begin 
-            if (ex_ma.branch)
-                ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma_btype_i.imm_b12}}, ex_ma_btype_i.imm_b12, ex_ma_btype_i.imm_b11, ex_ma_btype_i.imm_b10_5, ex_ma_btype_i.imm_b4_1, 1'b0});
-            else
-                ma_wb.next_pc = ex_ma.pc + 4; // default
-        end
-        JALR: begin
-            ma_wb.next_pc = $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) + ex_ma.rf_r1;
-            ma_wb.next_pc[0] = 1'b0;
-        end
-        JAL: begin
-            ma_wb.next_pc = ex_ma.pc + $signed({{11{ex_ma_jtype_i.imm_b20}}, ex_ma_jtype_i.imm_b20, ex_ma_jtype_i.imm_b19_12, ex_ma_jtype_i.imm_b11, ex_ma_jtype_i.imm_b10_1, 1'b0});
-        end
-        default: ma_wb.next_pc = ex_ma.pc + 4;
-    endcase
+    end
 end
 
 // register file write
