@@ -48,31 +48,6 @@ always_comb
         default: next_hstate = NORMAL;
     endcase
 
-// Multicycle RV32
-// enum logic [1:0] {IF, EX, MA, WB} state, next_state;
-
-//always_ff @(posedge clk or negedge rst_n)
-//    if(!rst_n)
-//        state <= IF;
-//    else
-//        state <= next_state;
-
-//always_comb begin 
-//    next_state = IF;
-//    ibus.bstart = 1'b0;
-//
-//    if (!(hstate == HALTED)) // gaurantee to halt only on Instruction Fetch
-//        case(state)
-//            IF: begin 
-//                ibus.bstart = 1'b1;
-//                next_state = ibus.bdone ? EX : IF; 
-//            end
-//            EX: next_state = (mem_wr | mem_rd) ? MA : WB;
-//            MA: next_state = dbus.bdone ? WB : MA;
-//            WB: next_state = IF;
-//        endcase
-//end
-
 logic [31:0] pc, next_pc;
 
 always_comb begin
@@ -98,13 +73,19 @@ end
 
 logic [31:0] instruction;
 
+
 struct {
+    logic [31:0] instruction;
+
+    // intrinsic
     logic [4:0] rf_rs1;
     logic [4:0] rf_rs2;
     logic [4:0] rf_rd;
 } if_id;
 
 struct {
+    logic [31:0] instruction;
+
     logic [31:0] rf_r1;
     logic [31:0] rf_r2;
     logic [11:0] csr_addr;
@@ -112,10 +93,21 @@ struct {
     logic [2:0] alu_funct3;
     logic [6:0] alu_funct7;
     logic [31:20] itype_imm;
+    bit [31:25] stype_imm_b11_5;
 } id_ex;
 
 struct {
+    logic [31:0] instruction;
+
+    // passed
+    mopcode_t mopcode;
+    logic [31:0] rf_r1;
+    logic [19:15] itype_rs1;    
+
+    
+    // intrinsic
     logic [31:0] rf_r2;
+    logic [31:20] itype_imm;
     logic [31:0] mem_addr;
     tsize_e tsize;
     ttype_e ttype;
@@ -127,14 +119,39 @@ struct {
     logic alu_out_n;
     logic alu_out_overflow;
     logic alu_out_z;
+    logic branch;
+    
+    bit [19:12] jtype_imm_b19_12;
+    bit jtype_imm_b11;
+    bit jtype_imm_b20;
+    bit [30:21] jtype_imm_b10_1;
+
+
+    // to pass
+    logic [2:0] itype_funct3;
+    logic [31:12] utype_imm;
+    logic [31:0] pc;
 } ex_ma;
 
 struct {
+    logic [31:0] instruction;
+
+    // passed
+    mopcode_t mopcode;
+    logic [2:0] itype_funct3;    
+    logic [31:0] alu_out;
+    logic [31:12] utype_imm;
+    logic [31:0] pc;
+    logic [31:0] csr_read;
+
+
+    // intrinsic
     logic [31:0] mem_rdata;
     logic rf_wr;
     logic [31:0] rf_wrdata;
     logic csr_wr;
     logic [31:0] csr_wrdata;
+    logic [31:0] next_pc;
 } ma_wb;
 
 rtype rtype_i = instruction;
@@ -179,13 +196,18 @@ logic [31:0] csr_wrdata;
 logic [31:0] csr_read;
 
 
+btype ex_ma_btype_i = ex_ma.instruction;
+jtype ex_ma_jtype_i = ex_ma.instruction;
+itype ex_ma_itype_i = ex_ma.instruction;
+
+
 always_comb begin
     dbus.wdata = ex_ma.rf_r2; // always writing from data in register
     dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
     dbus.ttype = ex_ma.ttype;
     dbus.breq = dbus.bstart; // TODO: breq and bstart are same? either have clear sepearion in logic or collapse into one
     dbus.addr = ex_ma.mem_addr;
-    ma_wb.mem_rdata = dbus.rdata;
+    
     dbus.tsize = ex_ma.tsize;
 end
 
@@ -355,46 +377,54 @@ end
 // input EX/MA
 // memory access address
 // TODO: use ALU if free to calculate
-always_comb
+always_comb begin
+    stype stype_i = stype'(id_ex.instruction);
+    itype itype_i = itype'(id_ex.instruction);
+
     case(mopcode)
-        LOAD: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{id_ex.itype_imm[31]}},id_ex.itype_imm});
-        STORE: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{id_ex.stype_imm_b11_5[31]}},id_ex.stype_imm_b11_5, id_ex.stype_imm_b4_0});
+        LOAD: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{itype_i.imm[31]}}, itype_i.imm});
+        STORE: ex_ma.mem_addr = id_ex.rf_r1 + $signed({{20{stype_i.imm_b11_5[31]}},stype_i.imm_b11_5, stype_i.imm_b4_0});
         default: ex_ma.mem_addr = 32'b0;
     endcase
+end
 
 // input EX/MA
-// pc write
-always_comb
+// pc write and memory read
+always_comb begin
+    ma_wb.mem_rdata = dbus.rdata;
+
     case(ex_ma.mopcode)
         BRANCH: begin 
             if (ex_ma.branch)
-                ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma.btype_imm_b12}}, ex_ma.btype_imm_b12, ex_ma.btype_imm_b11, ex_ma.btype_imm_b10_5, ex_ma.btype_imm_b4_1, 1'b0});
+                ma_wb.next_pc = ex_ma.pc + $signed({{19{ex_ma_btype_i.imm_b12}}, ex_ma_btype_i.imm_b12, ex_ma_btype_i.imm_b11, ex_ma_btype_i.imm_b10_5, ex_ma_btype_i.imm_b4_1, 1'b0});
             else
                 ma_wb.next_pc = ex_ma.pc + 4; // default
         end
         JALR: begin
-            ma_wb.next_pc = $signed({{20{ex_ma.itype_imm[31]}}, ex_ma.itype_imm}) + ex_ma.rf_r1;
+            ma_wb.next_pc = $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) + ex_ma.rf_r1;
             ma_wb.next_pc[0] = 1'b0;
         end
         JAL: begin
-            ma_wb.next_pc = ex_ma.pc + $signed({{11{ex_ma.jtype_imm_b20}}, ex_ma.jtype_imm_b20, ex_ma.jtype_imm_b19_12, ex_ma.jtype_imm_b11, ex_ma.jtype_imm_b10_1, 1'b0});
+            ma_wb.next_pc = ex_ma.pc + $signed({{11{ex_ma_jtype_i.imm_b20}}, ex_ma_jtype_i.imm_b20, ex_ma_jtype_i.imm_b19_12, ex_ma_jtype_i.imm_b11, ex_ma_jtype_i.imm_b10_1, 1'b0});
         end
         default: ma_wb.next_pc = ex_ma.pc + 4;
     endcase
+end
 
 // Branch
-// Control Unit
-always_comb begin
-    branch = 0;
+// Combinational for ID/EX
 
-    if (mopcode == BRANCH)
-        case(btype_i.funct3)
-            3'b000: branch = (alu_out_z); // BEQ
-            3'b001: branch = !(alu_out_z); // BNEQ
-            3'b100: branch = (alu_out_n ^ alu_out_overflow); // BLT
-            3'b101: branch = !(alu_out_n ^ alu_out_overflow); // BGE
-            3'b110: branch = !alu_out_c; // BLTU
-            3'b111: branch = alu_out_c; // BGEU
+always_comb begin
+    ex_ma.branch = 0;
+
+    if (id_ex.mopcode == BRANCH)
+        case(ex_ma_btype_i.funct3)
+            3'b000: ex_ma.branch = (ex_ma.alu_out_z); // BEQ
+            3'b001: ex_ma.branch = !(ex_ma.alu_out_z); // BNEQ
+            3'b100: ex_ma.branch = (ex_ma.alu_out_n ^ ex_ma.alu_out_overflow); // BLT
+            3'b101: ex_ma.branch = !(ex_ma.alu_out_n ^ ex_ma.alu_out_overflow); // BGE
+            3'b110: ex_ma.branch = !ex_ma.alu_out_c; // BLTU
+            3'b111: ex_ma.branch = ex_ma.alu_out_c; // BGEU
         endcase
 end
 
@@ -403,7 +433,7 @@ end
 always_comb begin
     ma_wb.csr_wrdata = 0;
 
-    if(mopcode == SYSTEM)
+    if(ma_wb.mopcode == SYSTEM)
         case(itype_i.funct3)
             `CSRRW: begin
                 ma_wb.csr_wrdata = ex_ma.rf_r1;
