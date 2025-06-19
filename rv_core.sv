@@ -41,7 +41,7 @@ always_ff @(posedge clk, negedge rst_n) begin
 end
 
 logic halted; // TODO: wire up to pipeline
-logic stall; // TODO: wire up to pipeline
+logic stall = 1'b0; // TODO: wire up to pipeline
 
 always_comb
     case(hstate)
@@ -117,7 +117,6 @@ struct packed {
     logic [6:0] alu_funct7;
     logic [31:0] rf_r1;
     logic [31:0] rf_r2;
-    logic [11:0] csr_addr;
 } id_ex;
 
 struct packed {
@@ -173,50 +172,34 @@ btype btype_i = instruction;
 utype utype_i = instruction;
 jtype jtype_i = instruction;
 
+itype id_ex_itype_i = if_id.instruction;
+
+btype ex_ma_btype_i = id_ex.instruction;
+jtype ex_ma_jtype_i = id_ex.instruction;
+itype ex_ma_itype_i = id_ex.instruction;
+stype ex_ma_stype_i = id_ex.instruction;
+
+itype ma_wb_itype_i = ex_ma.instruction;
+utype ma_wb_utype_i = ex_ma.instruction;
+
+
 logic [6:0] opcode;
 
 logic [31:0] alu_out;
-logic alu_use_shamt;
-logic [4:0] alu_shamt;
-logic [2:0] alu_funct3;
-logic [6:0] alu_funct7;
-logic id_imm;
-
 logic [31:0] rf_wrdata, rf_r1, rf_r2;
-logic [4:0] rf_rs1, rf_rs2, rf_rd;
-logic rf_wr;
-
-logic branch;
-
-logic mem_wr;
-logic mem_rd;
-logic [31:0] mem_addr, mem_rdata;
-logic mem_r;
-
-tsize_e tsize;
-
 logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
+
+//-----------------------------------------------------------------------------
+// Exposed CSRs
+//-----------------------------------------------------------------------------
 
 mstatus_t mstatus;
 mtvec_t mtvec;
 mcause_t mcause;
 logic [31:0] mip, mie;
 
-logic csr_wr;
-logic [11:0] csr_addr;
-logic [31:0] csr_wrdata;
+// Output
 logic [31:0] csr_read;
-
-
-itype id_ex_itype_i = id_ex.instruction;
-
-btype ex_ma_btype_i = ex_ma.instruction;
-jtype ex_ma_jtype_i = ex_ma.instruction;
-itype ex_ma_itype_i = ex_ma.instruction;
-stype ex_ma_stype_i = ex_ma.instruction;
-
-itype ma_wb_itype_i = ma_wb.instruction;
-utype ma_wb_utype_i = ma_wb.instruction;
 
 
 //-----------------------------------------------------------------------------
@@ -281,6 +264,8 @@ always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         if_id <= 0;
     else if (!stall) begin
+        if_id.instruction <= instruction;
+        if_id.pc <= pc;
         if (opcode[1:0] == 2'b11)
             case(opcode[6:5])
                 2'b00:
@@ -306,7 +291,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                             if_id.rf_rs1 <= itype_i.rs1;
                             if_id.rf_wr <= 1'b1;
                             if_id.alu_funct3 <= itype_i.funct3;
-                            if_id.alu_funct7 <= alu_funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
+                            if_id.alu_funct7 <= itype_i.funct3 == 3'b101 ? itype_i.imm[31:25] : 7'b0;
                         end
                         3'b101: begin // AUIPC
                             assert (mopcode_t'(opcode[6:2]) == AUIPC);
@@ -423,6 +408,10 @@ always_ff @(posedge clk or negedge rst_n)
     if (!rst_n)
         id_ex <= 0;
     else if (!stall) begin
+        id_ex.instruction <= if_id.instruction;
+        id_ex.pc <= if_id.pc;
+        id_ex.alu_funct3 <= if_id.alu_funct3;
+        id_ex.alu_funct7 <= if_id.alu_funct7;
         id_ex.rf_r1 <= rf_r1;
         id_ex.rf_r2 <= rf_r1;
     end
@@ -441,8 +430,10 @@ always_ff @(posedge clk or negedge rst_n) begin
     else if (!stall) begin
         ex_ma.alu_out <= alu_out;
         ex_ma.csr_read <= csr_read;
+        ex_ma.instruction <= id_ex.instruction;
+        ex_ma.pc <= id_ex.pc;
 
-        if (ex_ma.instruction[6:2] == BRANCH)
+        if (id_ex.instruction[6:2] == BRANCH)
             case(ex_ma_btype_i.funct3)
                 3'b000: ex_ma.branch <= (alu_out_z); // BEQ
                 3'b001: ex_ma.branch <= !(alu_out_z); // BNEQ
@@ -472,7 +463,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     else if (!stall) begin
         ma_wb.mem_rdata <= dbus.rdata;
 
-        if(ma_wb.instruction[6:2] == SYSTEM)
+        if(ex_ma.instruction[6:2] == SYSTEM)
             case(itype_i.funct3)
                 `CSRRW: begin
                     ma_wb.csr_wrdata <= ex_ma.rf_r1;
@@ -514,7 +505,7 @@ end
 
 // register file write
 always_comb
-    case(ma_wb.instruction[6:2])
+    case(ex_ma.instruction[6:2])
         LOAD: 
             case(ma_wb_itype_i.funct3)
                 3'b000: rf_wrdata = {{24{ma_wb.mem_rdata[7]}}, ma_wb.mem_rdata[7:0]}; // LB
