@@ -1,6 +1,7 @@
 import instructions::*;
 import bus_if_types_pkg::*;
 
+// TODO: convert to enum
 `include "funct3.sv" // funct3 encoded values in BRANCH and SYSTEM major opcodes
 
 // Core with I-Bus interface and D-bus interface; both maybe connected with a crossbar
@@ -25,9 +26,12 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input bit irq_timer = 1'b0
 );
 
+//-----------------------------------------------------------------------------
+// Debuging
+//-----------------------------------------------------------------------------
+
 enum logic [2:0] {RESET, NORMAL, HALTING, HALTED, RESUMING} hstate, next_hstate; // hart state for DM
 
-/// FSM for DM
 always_ff @(posedge clk, negedge rst_n) begin
     if (!rst_n)
         hstate <= RESET;
@@ -47,6 +51,10 @@ always_comb
         RESUMING: next_hstate = NORMAL;
         default: next_hstate = NORMAL;
     endcase
+
+//-----------------------------------------------------------------------------
+// PC and I-bus interface
+//-----------------------------------------------------------------------------
 
 logic [31:0] pc, next_pc;
 
@@ -73,6 +81,10 @@ end
 
 logic [31:0] instruction;
 
+
+//-----------------------------------------------------------------------------
+// Pipeline stage definitions
+//-----------------------------------------------------------------------------
 
 // TODO: use modports with interfaces if this makes it more readible
 
@@ -139,6 +151,10 @@ struct {
     logic [31:0] next_pc;
 } ma_wb;
 
+//-----------------------------------------------------------------------------
+// Interconnections and type casts
+//-----------------------------------------------------------------------------
+
 rtype rtype_i = instruction;
 itype itype_i = instruction;
 stype stype_i = instruction;
@@ -192,6 +208,10 @@ itype ma_wb_itype_i = ma_wb.instruction;
 utype ma_wb_utype_i = ma_wb.instruction;
 
 
+//-----------------------------------------------------------------------------
+// D-bus interface
+//-----------------------------------------------------------------------------
+
 always_comb begin
     dbus.wdata = ex_ma.rf_r2; // always writing from data in register
     dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
@@ -201,6 +221,9 @@ always_comb begin
     dbus.tsize = ex_ma.tsize;
 end
 
+//-----------------------------------------------------------------------------
+// Major Op-codes
+//-----------------------------------------------------------------------------
 
 typedef enum logic [4:0] {
     LOAD        = 5'b00000,
@@ -235,7 +258,10 @@ typedef enum logic [4:0] {
 
 mopcode_t mopcode; // major opcode
 
+//-----------------------------------------------------------------------------
 // Control Unit
+//-----------------------------------------------------------------------------
+
 // IF/ID (default)
 always_comb begin
     opcode = instruction[6:0];
@@ -394,7 +420,11 @@ always_comb begin
         endcase
 end
 
-// input EX/MA
+//-----------------------------------------------------------------------------
+// EX/MA
+//-----------------------------------------------------------------------------
+
+// input ALU, CSR
 // memory access address, branching, alu, csr
 // TODO: use ALU if free to calculate
 always_comb begin
@@ -424,6 +454,11 @@ always_comb begin
         default: ex_ma.mem_addr = 32'b0;
     endcase
 end
+
+
+//-----------------------------------------------------------------------------
+// MA/WB
+//-----------------------------------------------------------------------------
 
 // input EX/MA
 // pc write and memory read and CSRs
@@ -494,6 +529,11 @@ always_comb
         default: rf_wrdata = 32'b0;
     endcase
 
+//-----------------------------------------------------------------------------
+// Register File
+//-----------------------------------------------------------------------------
+
+
 // rf_rs*, rf_rd IF/ID
 // rf_wr, rf_wrdata imm (IF/ID) or csr (EX/MA) or mem (MA/WB)
 rf rf_u0(
@@ -513,6 +553,11 @@ rf rf_u0(
     .r1(id_ex.rf_r1),
     .r2(id_ex.rf_r2)
 );
+
+//-----------------------------------------------------------------------------
+// CSRs
+//-----------------------------------------------------------------------------
+
 
 csr csr_u0(
     .clk(clk),
@@ -538,6 +583,11 @@ csr csr_u0(
     .o_mtvec(mtvec),
     .o_mcause(mcause)
 );
+
+//-----------------------------------------------------------------------------
+// ALU
+//-----------------------------------------------------------------------------
+
 
 alu alu_u0(
     // input ID/EX
