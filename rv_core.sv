@@ -6,6 +6,7 @@ import bus_if_types_pkg::*;
 
 // Core with I-Bus interface and D-bus interface; both maybe connected with a crossbar
 // but to avoid structural hazard, allow high performance SRAM to have dual ports
+// TODO: make sure no race condition happens between always_ff and always_comb
 module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     // bus interfaces
     master_bus_if.master dbus,
@@ -27,6 +28,28 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 );
 
 //-----------------------------------------------------------------------------
+// Vital signals, hazard detection, flushing and stalling
+//-----------------------------------------------------------------------------
+
+
+logic halted; // TODO: wire up to pipeline
+
+logic stall; // due to hazards or memory delay
+logic flush; // if jump or branch was taken
+logic [1:0] pipeline_fill;
+
+always_comb begin
+    stall = !ibus.bdone || ((ex_ma.mem_wr | ex_ma.mem_rd) && !dbus.bdone);
+    flush = pipeline_fill == 3 && ma_wb.next_pc != ex_ma.pc;
+end
+
+always_ff @(posedge clk, negedge rst_n) 
+    if (!rst_n || flush)
+        pipeline_fill <= 0;
+    else if (!stall)
+        pipeline_fill <= pipeline_fill == 3 ? pipeline_fill : pipeline_fill + 1;
+
+//-----------------------------------------------------------------------------
 // Debuging
 //-----------------------------------------------------------------------------
 
@@ -40,8 +63,6 @@ always_ff @(posedge clk, negedge rst_n) begin
     end
 end
 
-logic halted; // TODO: wire up to pipeline
-logic stall = 1'b0; // TODO: wire up to pipeline
 
 always_comb
     case(hstate)
@@ -69,10 +90,15 @@ always_comb begin
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
+    if (!rst_n) begin
         ibus.addr <= INITIAL_PC;
-    else if (ibus.bdone)
-        ibus.addr <= next_pc; // only attempt new ibus transfer when bus done previous
+    end
+    else if (!stall) begin
+        if (pipeline_fill == 3 && ma_wb.next_pc != ex_ma.pc)
+            ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
+        else
+            ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
+    end
 end
 
 always_ff @(posedge clk) begin
@@ -105,7 +131,6 @@ struct packed {
     logic csr_wr;
     logic [2:0] alu_funct3;
     logic [6:0] alu_funct7;
-    logic alu_use_shamt;
     tsize_e tsize;
 } if_id;
 
@@ -117,6 +142,13 @@ struct packed {
     logic [6:0] alu_funct7;
     logic [31:0] rf_r1;
     logic [31:0] rf_r2;
+
+    // passed from CU
+    tsize_e tsize;
+    logic rf_wr;
+    logic mem_wr;
+    logic mem_rd;
+    logic csr_wr;
 } id_ex;
 
 struct packed {
@@ -125,13 +157,14 @@ struct packed {
 
     // passed
     logic [31:0] rf_r1;
+    logic csr_wr;
+    logic rf_wr;
 
     
     // intrinsic
     logic [31:0] rf_r2;
     logic [31:0] mem_addr;
     tsize_e tsize;
-    ttype_e ttype;
     logic mem_rd;
     logic mem_wr;
     logic [31:0] csr_read;
@@ -155,7 +188,6 @@ struct packed {
     // intrinsic
     logic [31:0] mem_rdata;
     logic rf_wr;
-    logic [31:0] rf_wrdata;
     logic csr_wr;
     logic [31:0] csr_wrdata;
     logic [31:0] next_pc;
@@ -165,22 +197,41 @@ struct packed {
 // Interconnections and type casts
 //-----------------------------------------------------------------------------
 
-rtype rtype_i = instruction;
-itype itype_i = instruction;
-stype stype_i = instruction;
-btype btype_i = instruction;
-utype utype_i = instruction;
-jtype jtype_i = instruction;
+rtype rtype_i;
+itype itype_i;
+stype stype_i;
+btype btype_i;
+utype utype_i;
+jtype jtype_i;
 
-itype id_ex_itype_i = if_id.instruction;
+itype id_ex_itype_i;
 
-btype ex_ma_btype_i = id_ex.instruction;
-jtype ex_ma_jtype_i = id_ex.instruction;
-itype ex_ma_itype_i = id_ex.instruction;
-stype ex_ma_stype_i = id_ex.instruction;
+btype ex_ma_btype_i;
+jtype ex_ma_jtype_i;
+itype ex_ma_itype_i;
+stype ex_ma_stype_i;
 
-itype ma_wb_itype_i = ex_ma.instruction;
-utype ma_wb_utype_i = ex_ma.instruction;
+itype ma_wb_itype_i;
+utype ma_wb_utype_i;
+
+always_comb begin
+    rtype_i = instruction;
+    itype_i = instruction;
+    stype_i = instruction;
+    btype_i = instruction;
+    utype_i = instruction;
+    jtype_i = instruction;
+
+    id_ex_itype_i = if_id.instruction;
+
+    ex_ma_btype_i = id_ex.instruction;
+    ex_ma_jtype_i = id_ex.instruction;
+    ex_ma_itype_i = id_ex.instruction;
+    ex_ma_stype_i = id_ex.instruction;
+
+    ma_wb_itype_i = ex_ma.instruction;
+    ma_wb_utype_i = ex_ma.instruction;
+end
 
 
 logic [6:0] opcode;
@@ -209,7 +260,7 @@ logic [31:0] csr_read;
 always_comb begin
     dbus.wdata = ex_ma.rf_r2; // always writing from data in register
     dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
-    dbus.ttype = ex_ma.ttype;
+    dbus.ttype = ex_ma.mem_wr ? WRITE : READ;
     dbus.breq = dbus.bstart; // TODO: breq and bstart are same? either have clear sepearion in logic or collapse into one
     dbus.addr = ex_ma.mem_addr;
     dbus.tsize = ex_ma.tsize;
@@ -261,7 +312,7 @@ always_comb begin
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
+    if (!rst_n || flush)
         if_id <= 0;
     else if (!stall) begin
         if_id.instruction <= instruction;
@@ -405,15 +456,20 @@ end
 //-----------------------------------------------------------------------------
 
 always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n)
+    if (!rst_n || flush)
         id_ex <= 0;
     else if (!stall) begin
         id_ex.instruction <= if_id.instruction;
         id_ex.pc <= if_id.pc;
         id_ex.alu_funct3 <= if_id.alu_funct3;
         id_ex.alu_funct7 <= if_id.alu_funct7;
+        id_ex.tsize <= if_id.tsize;
         id_ex.rf_r1 <= rf_r1;
         id_ex.rf_r2 <= rf_r1;
+        id_ex.rf_wr <= if_id.rf_wr;
+        id_ex.mem_wr <= if_id.mem_wr;
+        id_ex.mem_rd <= if_id.mem_rd;
+        id_ex.csr_wr <= if_id.csr_wr;
     end
 
 
@@ -425,13 +481,21 @@ always_ff @(posedge clk or negedge rst_n)
 // memory access address, branching, alu, csr
 // TODO: use ALU if free to calculate
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
+    if (!rst_n || flush)
         ex_ma <= 0;
     else if (!stall) begin
+        ex_ma.rf_r1 <= id_ex.rf_r1;
+        ex_ma.rf_r2 <= id_ex.rf_r2;
         ex_ma.alu_out <= alu_out;
         ex_ma.csr_read <= csr_read;
         ex_ma.instruction <= id_ex.instruction;
+        ex_ma.tsize <= id_ex.tsize;
         ex_ma.pc <= id_ex.pc;
+
+        ex_ma.mem_rd <= id_ex.mem_rd;
+        ex_ma.mem_wr <= id_ex.mem_wr;
+        ex_ma.rf_wr <= id_ex.rf_wr;
+        ex_ma.csr_wr <= id_ex.csr_wr;
 
         if (id_ex.instruction[6:2] == BRANCH)
             case(ex_ma_btype_i.funct3)
@@ -458,9 +522,15 @@ end
 
 // pc write and memory read and CSRs
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
+    if (!rst_n) //  `|| flush` no need as all stages before would be discarded
         ma_wb <= 0;
     else if (!stall) begin
+        ma_wb.instruction <= ex_ma.instruction;
+        ma_wb.pc <= ex_ma.pc;
+        ma_wb.alu_out <= ex_ma.alu_out;
+        ma_wb.csr_read <= csr_read;
+        ma_wb.rf_wr <= ex_ma.rf_wr;
+        ma_wb.csr_wr <= ex_ma.csr_wr;
         ma_wb.mem_rdata <= dbus.rdata;
 
         if(ex_ma.instruction[6:2] == SYSTEM)
@@ -543,7 +613,7 @@ rf rf_u0(
 
     // input MA/WB
     .wr(ma_wb.rf_wr), // state changing
-    .wrdata(ma_wb.rf_wrdata),
+    .wrdata(rf_wrdata),
 
     // output ID/EX
     .r1(rf_r1),
