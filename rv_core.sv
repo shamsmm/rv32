@@ -34,20 +34,26 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 
 logic halted; // TODO: wire up to pipeline
 
+logic hazard = 1'b0;
 logic stall; // due to hazards or memory delay
 logic flush; // if jump or branch was taken
-logic [1:0] pipeline_fill;
+logic [2:0] pipeline_fill;
 
-always_comb begin
-    stall = !ibus.bdone || ((ex_ma.mem_wr | ex_ma.mem_rd) && !dbus.bdone);
-    flush = pipeline_fill == 3 && ma_wb.next_pc != ex_ma.pc;
+always_ff @(negedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        stall <= 0;
+        flush <= 0;
+    end else begin
+        stall <= hazard | (ibus_state != IDLE) | (dbus_state != IDLE);
+        flush <= pipeline_fill == 4 && ma_wb.next_pc != ex_ma.pc;
+    end
 end
 
 always_ff @(posedge clk, negedge rst_n) 
     if (!rst_n || flush)
         pipeline_fill <= 0;
     else if (!stall)
-        pipeline_fill <= pipeline_fill == 3 ? pipeline_fill : pipeline_fill + 1;
+        pipeline_fill <= pipeline_fill == 4 ? pipeline_fill : pipeline_fill + 1;
 
 //-----------------------------------------------------------------------------
 // Debuging
@@ -78,7 +84,34 @@ always_comb
 // PC and I-bus interface
 //-----------------------------------------------------------------------------
 
-logic [31:0] pc, next_pc;
+logic [31:0] pc;
+
+typedef enum logic [1:0] {IDLE, AD, DA} bus_state_e;
+
+bus_state_e ibus_state;
+bus_state_e dbus_state;
+
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        ibus_state <= IDLE;
+    else
+        case(ibus_state)
+            IDLE: ibus_state <= ibus.bstart ? AD : IDLE;
+            AD: ibus_state <= ibus.bdone ? DA : AD;
+            DA: ibus_state <= IDLE;
+        endcase
+end
+
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        dbus_state <= IDLE;
+    else
+        case(dbus_state)
+            IDLE: dbus_state <= dbus.bstart ? AD : IDLE;
+            AD: dbus_state <= dbus.bdone ? DA : AD;
+            DA: dbus_state <= IDLE;
+        endcase
+end
 
 always_comb begin
     ibus.bstart = 1; // Always keep fetching instructions until pipeline flush
@@ -86,24 +119,22 @@ always_comb begin
     ibus.ttype = READ;
     ibus.tsize = WORD;
     ibus.wdata = 32'b0;
-    pc = ibus.addr;
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         ibus.addr <= INITIAL_PC;
     end
+    else if (flush)
+        ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
     else if (!stall) begin
-        if (pipeline_fill == 3 && ma_wb.next_pc != ex_ma.pc)
-            ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
-        else
-            ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
+        ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
     end
 end
 
-always_ff @(posedge clk) begin
-    if (ibus.bdone)
-        instruction <= ibus.rdata;
+
+always_comb begin
+    instruction = ibus.rdata;
 end
 
 logic [31:0] instruction;
@@ -146,6 +177,7 @@ struct packed {
     // passed from CU
     tsize_e tsize;
     logic rf_wr;
+    logic [4:0] rf_rd;
     logic mem_wr;
     logic mem_rd;
     logic csr_wr;
@@ -159,6 +191,7 @@ struct packed {
     logic [31:0] rf_r1;
     logic csr_wr;
     logic rf_wr;
+    logic [4:0] rf_rd;
 
     
     // intrinsic
@@ -187,6 +220,7 @@ struct packed {
 
     // intrinsic
     logic [31:0] mem_rdata;
+    logic [4:0] rf_rd;
     logic rf_wr;
     logic csr_wr;
     logic [31:0] csr_wrdata;
@@ -214,6 +248,8 @@ stype ex_ma_stype_i;
 itype ma_wb_itype_i;
 utype ma_wb_utype_i;
 
+itype wb_itype_i;
+
 always_comb begin
     rtype_i = instruction;
     itype_i = instruction;
@@ -231,6 +267,8 @@ always_comb begin
 
     ma_wb_itype_i = ex_ma.instruction;
     ma_wb_utype_i = ex_ma.instruction;
+
+    wb_itype_i = ma_wb.instruction;
 end
 
 
@@ -316,7 +354,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         if_id <= 0;
     else if (!stall) begin
         if_id.instruction <= instruction;
-        if_id.pc <= pc;
+        if_id.pc <= ibus.addr;
         if (opcode[1:0] == 2'b11)
             case(opcode[6:5])
                 2'b00:
@@ -467,6 +505,7 @@ always_ff @(posedge clk or negedge rst_n)
         id_ex.rf_r1 <= rf_r1;
         id_ex.rf_r2 <= rf_r1;
         id_ex.rf_wr <= if_id.rf_wr;
+        id_ex.rf_rd <= if_id.rf_rd;
         id_ex.mem_wr <= if_id.mem_wr;
         id_ex.mem_rd <= if_id.mem_rd;
         id_ex.csr_wr <= if_id.csr_wr;
@@ -495,6 +534,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ex_ma.mem_rd <= id_ex.mem_rd;
         ex_ma.mem_wr <= id_ex.mem_wr;
         ex_ma.rf_wr <= id_ex.rf_wr;
+        ex_ma.rf_rd <= id_ex.rf_rd;
         ex_ma.csr_wr <= id_ex.csr_wr;
 
         if (id_ex.instruction[6:2] == BRANCH)
@@ -529,6 +569,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ma_wb.pc <= ex_ma.pc;
         ma_wb.alu_out <= ex_ma.alu_out;
         ma_wb.csr_read <= csr_read;
+        ma_wb.rf_rd <= ex_ma.rf_rd;
         ma_wb.rf_wr <= ex_ma.rf_wr;
         ma_wb.csr_wr <= ex_ma.csr_wr;
         ma_wb.mem_rdata <= dbus.rdata;
@@ -575,9 +616,9 @@ end
 
 // register file write
 always_comb
-    case(ex_ma.instruction[6:2])
+    case(ma_wb.instruction[6:2])
         LOAD: 
-            case(ma_wb_itype_i.funct3)
+            case(wb_itype_i.funct3)
                 3'b000: rf_wrdata = {{24{ma_wb.mem_rdata[7]}}, ma_wb.mem_rdata[7:0]}; // LB
                 3'b001: rf_wrdata = {{16{ma_wb.mem_rdata[15]}}, ma_wb.mem_rdata[15:0]}; // LH
                 3'b010: rf_wrdata = ma_wb.mem_rdata; // LW
@@ -609,7 +650,7 @@ rf rf_u0(
     // input IF/ID
     .rs1(if_id.rf_rs1),
     .rs2(if_id.rf_rs2),
-    .rd(if_id.rf_rd),
+    .rd(ma_wb.rf_rd),
 
     // input MA/WB
     .wr(ma_wb.rf_wr), // state changing
@@ -658,9 +699,9 @@ csr csr_u0(
 alu alu_u0(
     // input ID/EX
     .in1(id_ex.rf_r1), // always
-    .in2((id_ex.instruction[6:2] == OP_IMM) ? $signed({{20{id_ex_itype_i.imm[31]}}, id_ex_itype_i.imm}) : id_ex.rf_r2),
+    .in2((id_ex.instruction[6:2] == OP_IMM) ? $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) : id_ex.rf_r2),
     .use_shamt(id_ex.instruction[6:2] == OP_IMM),
-    .shamt(id_ex_itype_i.imm[24:20]),
+    .shamt(ex_ma_itype_i.imm[24:20]),
 
     
     // output EX/MA
