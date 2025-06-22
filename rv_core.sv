@@ -35,24 +35,33 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 logic halted; // TODO: wire up to pipeline
 
 logic hazard = 1'b0;
-logic stall; // due to hazards or memory delay
+logic stall_if_id, stall_id_ex, stall_ex_ma, stall_ma_wb; // due to hazards or memory delay
 logic flush; // if jump or branch was taken
 logic [2:0] pipeline_fill;
 
 always_ff @(negedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        stall <= 0;
         flush <= 0;
     end else begin
-        stall <= hazard | (ibus_state != IDLE) | (dbus_state != IDLE);
-        flush <= pipeline_fill == 4 && ma_wb.next_pc != ex_ma.pc;
+        case(ma_wb.instruction[6:2])
+            BRANCH: begin 
+                flush <= ma_wb.branch;
+            end
+            JALR: begin
+                flush <= 1'b1;
+            end
+            JAL: begin
+                flush <= 1'b1;
+            end
+            default: flush <= 1'b0;
+        endcase
     end
 end
 
 always_ff @(posedge clk, negedge rst_n) 
     if (!rst_n || flush)
         pipeline_fill <= 0;
-    else if (!stall)
+    else if (!stall_if_id)
         pipeline_fill <= pipeline_fill == 4 ? pipeline_fill : pipeline_fill + 1;
 
 //-----------------------------------------------------------------------------
@@ -127,7 +136,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     end
     else if (flush)
         ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
-    else if (!stall) begin
+    else if (!stall_if_id) begin
         ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
     end
 end
@@ -216,7 +225,7 @@ struct packed {
     // passed
     logic [31:0] alu_out;
     logic [31:0] csr_read;
-
+    logic branch;
 
     // intrinsic
     logic [31:0] mem_rdata;
@@ -294,6 +303,53 @@ logic [31:0] csr_read;
 
 
 //-----------------------------------------------------------------------------
+// Data Forwarding
+//-----------------------------------------------------------------------------
+
+logic [31:0] correct_rf_r1, correct_rf_r2;
+
+always_comb begin
+    correct_rf_r1 = rf_r1;
+    correct_rf_r2 = rf_r2;
+
+    // steal signals
+    if (if_id.rf_rs1 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin //
+        correct_rf_r1 = rf_wrdata; // steal
+    end else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
+        if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
+            correct_rf_r1 = alu_out;
+    end
+
+    if (if_id.rf_rs2 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin
+        correct_rf_r2 = rf_wrdata; // steal
+    end else if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
+        if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
+            correct_rf_r2 = alu_out;
+    end
+end
+
+//-----------------------------------------------------------------------------
+// Hazard Detection
+//-----------------------------------------------------------------------------
+
+always_comb begin
+    stall_if_id = (ibus_state != IDLE) | (dbus_state != IDLE);
+    stall_id_ex = 0;
+    stall_ex_ma = 0;
+    stall_ma_wb = 0;
+    
+    // stall if can't data forward
+    if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
+        stall_ex_ma = 1'b1;
+    else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
+        stall_ex_ma = 1'b1;
+
+    stall_if_id = stall_if_id | stall_id_ex;
+    stall_id_ex = stall_id_ex | stall_ex_ma;
+    stall_ex_ma = stall_ex_ma | stall_ma_wb;
+end
+
+//-----------------------------------------------------------------------------
 // D-bus interface
 //-----------------------------------------------------------------------------
 
@@ -352,9 +408,9 @@ always_comb begin
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n || flush)
+    if (!rst_n || flush || stall_if_id)
         if_id <= 0;
-    else if (!stall) begin
+    else begin
         if_id.instruction <= instruction;
         if_id.pc <= ibus.addr;
         if (opcode[1:0] == 2'b11)
@@ -496,16 +552,16 @@ end
 //-----------------------------------------------------------------------------
 
 always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n || flush)
+    if (!rst_n || flush || stall_id_ex)
         id_ex <= 0;
-    else if (!stall) begin
+    else begin
         id_ex.instruction <= if_id.instruction;
         id_ex.pc <= if_id.pc;
         id_ex.alu_funct3 <= if_id.alu_funct3;
         id_ex.alu_funct7 <= if_id.alu_funct7;
         id_ex.tsize <= if_id.tsize;
-        id_ex.rf_r1 <= rf_r1;
-        id_ex.rf_r2 <= rf_r1;
+        id_ex.rf_r1 <= correct_rf_r1;
+        id_ex.rf_r2 <= correct_rf_r2;
         id_ex.rf_wr <= if_id.rf_wr;
         id_ex.rf_rd <= if_id.rf_rd;
         id_ex.mem_wr <= if_id.mem_wr;
@@ -522,9 +578,9 @@ always_ff @(posedge clk or negedge rst_n)
 // memory access address, branching, alu, csr
 // TODO: use ALU if free to calculate
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n || flush)
+    if (!rst_n || flush || stall_ex_ma)
         ex_ma <= 0;
-    else if (!stall) begin
+    else begin
         ex_ma.rf_r1 <= id_ex.rf_r1;
         ex_ma.rf_r2 <= id_ex.rf_r2;
         ex_ma.alu_out <= alu_out;
@@ -564,11 +620,12 @@ end
 
 // pc write and memory read and CSRs
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) //  `|| flush` no need as all stages before would be discarded
+    if (!rst_n || stall_ma_wb) //  `|| flush` no need as all stages before would be discarded
         ma_wb <= 0;
-    else if (!stall) begin
+    else begin
         ma_wb.instruction <= ex_ma.instruction;
         ma_wb.pc <= ex_ma.pc;
+        ma_wb.branch <= ex_ma.branch;
         ma_wb.alu_out <= ex_ma.alu_out;
         ma_wb.csr_read <= csr_read;
         ma_wb.rf_rd <= ex_ma.rf_rd;
