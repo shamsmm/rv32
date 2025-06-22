@@ -315,14 +315,14 @@ always_comb begin
         correct_rf_r1 = rf_wrdata; // steal
     end else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
         if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
-            correct_rf_r1 = alu_out;
+            correct_rf_r1 = ex_ma.alu_out;
     end
 
     if (if_id.rf_rs2 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin
         correct_rf_r2 = rf_wrdata; // steal
     end else if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
         if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
-            correct_rf_r2 = alu_out;
+            correct_rf_r2 = ex_ma.alu_out;
     end
 end
 
@@ -338,9 +338,9 @@ always_comb begin
     
     // stall if can't data forward
     if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
-        stall_ex_ma = 1'b1;
+        stall_id_ex = 1'b1;
     else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
-        stall_ex_ma = 1'b1;
+        stall_id_ex = 1'b1;
 
     stall_if_id = stall_if_id | stall_id_ex;
     stall_id_ex = stall_id_ex | stall_ex_ma;
