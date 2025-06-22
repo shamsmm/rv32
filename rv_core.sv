@@ -95,7 +95,7 @@ always_comb
 
 logic [31:0] pc;
 
-typedef enum logic [1:0] {IDLE, AD, DA} bus_state_e;
+typedef enum logic [1:0] {IDLE, ONGOING} bus_state_e;
 
 bus_state_e ibus_state;
 bus_state_e dbus_state;
@@ -105,9 +105,8 @@ always_ff @(posedge clk or negedge rst_n) begin
         ibus_state <= IDLE;
     else
         case(ibus_state)
-            IDLE: ibus_state <= ibus.bstart ? AD : IDLE;
-            AD: ibus_state <= ibus.bdone ? DA : AD;
-            DA: ibus_state <= IDLE;
+            IDLE: ibus_state <= ibus.bstart && !ibus.bdone ? ONGOING : IDLE;
+            ONGOING: ibus_state <= ibus.bdone ? IDLE : ONGOING;
         endcase
 end
 
@@ -116,9 +115,8 @@ always_ff @(posedge clk or negedge rst_n) begin
         dbus_state <= IDLE;
     else
         case(dbus_state)
-            IDLE: dbus_state <= dbus.bstart ? AD : IDLE;
-            AD: dbus_state <= dbus.bdone ? DA : AD;
-            DA: dbus_state <= IDLE;
+            IDLE: dbus_state <= dbus.bstart && !dbus.bdone ? ONGOING : IDLE;
+            ONGOING: dbus_state <= dbus.bdone ? IDLE : ONGOING;
         endcase
 end
 
@@ -333,7 +331,7 @@ end
 //-----------------------------------------------------------------------------
 
 always_comb begin
-    stall_if_id = (ibus_state != IDLE) | (dbus_state != IDLE);
+    stall_if_id = (ibus_state == ONGOING) | (dbus_state == ONGOING);
     stall_id_ex = 0;
     stall_ex_ma = 0;
     stall_ma_wb = 0;
