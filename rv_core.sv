@@ -249,6 +249,7 @@ itype ma_wb_itype_i;
 utype ma_wb_utype_i;
 
 itype wb_itype_i;
+utype wb_utype_i;
 
 always_comb begin
     rtype_i = instruction;
@@ -269,6 +270,7 @@ always_comb begin
     ma_wb_utype_i = ex_ma.instruction;
 
     wb_itype_i = ma_wb.instruction;
+    wb_utype_i = ma_wb.instruction;
 end
 
 
@@ -627,9 +629,9 @@ always_comb
                 default: rf_wrdata = 32'b0;
             endcase
         OP_IMM: rf_wrdata = ma_wb.alu_out;
-        AUIPC: rf_wrdata = {ma_wb_utype_i.imm, {12{1'b0}}} + ma_wb.pc;
+        AUIPC: rf_wrdata = {wb_utype_i.imm, {12{1'b0}}} + ma_wb.pc;
         OP: rf_wrdata = ma_wb.alu_out;
-        LUI: rf_wrdata = {ma_wb_utype_i.imm, {12{1'b0}}};
+        LUI: rf_wrdata = {wb_utype_i.imm, {12{1'b0}}};
         JALR: rf_wrdata = ma_wb.pc + 4;
         JAL: rf_wrdata = ma_wb.pc + 4;
         SYSTEM: rf_wrdata = ma_wb.csr_read;
