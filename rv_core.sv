@@ -395,8 +395,6 @@ typedef enum logic [4:0] {
     custom_3    = 5'b11110
 } mopcode_t;
 
-mopcode_t mopcode; // major opcode
-
 //-----------------------------------------------------------------------------
 // IF/ID (input instruction)
 //-----------------------------------------------------------------------------
@@ -603,7 +601,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                 3'b111: ex_ma.branch <= alu_out_c; // BGEU
             endcase
 
-        case(mopcode)
+        case(id_ex.instruction[6:2])
             LOAD: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm});
             STORE: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{ex_ma_stype_i.imm_b11_5[31]}},ex_ma_stype_i.imm_b11_5, ex_ma_stype_i.imm_b4_0});
             default: ex_ma.mem_addr <= 32'b0;
