@@ -35,7 +35,7 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 logic halted; // TODO: wire up to pipeline
 
 logic hazard = 1'b0;
-logic stall_if_id, stall_id_ex, stall_ex_ma, stall_ma_wb; // due to hazards or memory delay
+logic stall_if_id, stall_id_ex, stall_ex_ma, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
 logic flush; // if jump or branch was taken
 logic [2:0] pipeline_fill;
 
@@ -131,7 +131,7 @@ end
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         ibus.addr <= INITIAL_PC;
-    end
+    end     
     else if (flush)
         ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
     else if (!stall_if_id) begin
@@ -306,7 +306,7 @@ logic [31:0] csr_read;
 // Data Forwarding
 //-----------------------------------------------------------------------------
 
-logic [31:0] correct_rf_r1, correct_rf_r2;
+logic [31:0] correct_rf_r1, correct_rf_r2, correct_csr_read;
 
 always_comb begin
     correct_rf_r1 = rf_r1;
@@ -328,25 +328,38 @@ always_comb begin
     end
 end
 
+always_comb begin
+    correct_csr_read = csr_read;
+
+    // steal signals
+    if (if_id_itype_i.imm == ma_wb_itype_i.imm && ma_wb.instruction[6:2] == SYSTEM && ma_wb.csr_wr) begin
+        correct_csr_read = ma_wb.csr_wrdata; // steal
+    end
+end
+
 //-----------------------------------------------------------------------------
 // Hazard Detection
 //-----------------------------------------------------------------------------
 
-always_comb begin
-    stall_if_id = (ibus_state == ONGOING) | (dbus_state == ONGOING);
+always_ff @(negedge clk) begin
+    stall_if_id = 0;
     stall_id_ex = 0;
     stall_ex_ma = 0;
-    stall_ma_wb = 0;
+    
+    bubble_if_id = (ibus_state == ONGOING);
+    bubble_id_ex = 0;
+    bubble_ex_ma = 0;
+    bubble_ma_wb = (dbus_state == ONGOING);
     
     // stall if can't data forward
     if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
-        stall_id_ex = 1'b1;
+        bubble_id_ex = 1'b1;
     else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
-        stall_id_ex = 1'b1;
+        bubble_id_ex = 1'b1;
 
-    stall_if_id = stall_if_id | stall_id_ex;
-    stall_id_ex = stall_id_ex | stall_ex_ma;
-    stall_ex_ma = stall_ex_ma | stall_ma_wb;
+    stall_if_id = stall_if_id | stall_id_ex | bubble_id_ex;
+    stall_id_ex = stall_id_ex | stall_ex_ma | bubble_ex_ma;
+    stall_ex_ma = stall_ex_ma | bubble_ma_wb;
 end
 
 //-----------------------------------------------------------------------------
@@ -406,10 +419,14 @@ always_comb begin
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n || flush || stall_if_id)
+    if (!rst_n || flush)
+        if_id <= 0;
+    else if (stall_if_id)
+        if_id <= if_id;
+    else if (bubble_if_id)
         if_id <= 0;
     else begin
-        if_id.instruction <= instruction;
+        if_id.instruction <= instruction; // combinational, preserve in stall
         if_id.pc <= ibus.addr;
         if (opcode[1:0] == 2'b11)
             case(opcode[6:5])
@@ -550,7 +567,11 @@ end
 //-----------------------------------------------------------------------------
 
 always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n || flush || stall_id_ex)
+    if (!rst_n || flush)
+        id_ex <= 0;
+    else if (stall_id_ex)
+        id_ex <= id_ex;
+    else if (bubble_id_ex)
         id_ex <= 0;
     else begin
         id_ex.instruction <= if_id.instruction;
@@ -576,13 +597,17 @@ always_ff @(posedge clk or negedge rst_n)
 // memory access address, branching, alu, csr
 // TODO: use ALU if free to calculate
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n || flush || stall_ex_ma)
+    if (!rst_n || flush) // if bubble, need to recalculate
+        ex_ma <= 0;
+    else if (stall_ex_ma)
+        ex_ma <= ex_ma;
+    else if (bubble_ex_ma)
         ex_ma <= 0;
     else begin
         ex_ma.rf_r1 <= id_ex.rf_r1;
         ex_ma.rf_r2 <= id_ex.rf_r2;
         ex_ma.alu_out <= alu_out;
-        ex_ma.csr_read <= csr_read;
+        ex_ma.csr_read <= correct_csr_read;
         ex_ma.instruction <= id_ex.instruction;
         ex_ma.tsize <= id_ex.tsize;
         ex_ma.pc <= id_ex.pc;
@@ -618,8 +643,9 @@ end
 
 // pc write and memory read and CSRs
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n || stall_ma_wb) //  `|| flush` no need as all stages before would be discarded
+    if (!rst_n) //  `|| flush` not added to allow next_pc to be propagated to pc
         ma_wb <= 0;
+    // else if (bubble_ma_wb) this is a degenerate case, relying on previous ex_ma to retain state
     else begin
         ma_wb.instruction <= ex_ma.instruction;
         ma_wb.pc <= ex_ma.pc;
@@ -629,7 +655,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ma_wb.rf_rd <= ex_ma.rf_rd;
         ma_wb.rf_wr <= ex_ma.rf_wr;
         ma_wb.csr_wr <= ex_ma.csr_wr;
-        ma_wb.mem_rdata <= dbus.rdata;
+        ma_wb.mem_rdata <= dbus.rdata; // TODO: who said it was ready?
 
         if(ex_ma.instruction[6:2] == SYSTEM)
             case(itype_i.funct3)
@@ -670,6 +696,10 @@ always_ff @(posedge clk or negedge rst_n) begin
         endcase
     end
 end
+
+//-----------------------------------------------------------------------------
+// WB (input MA/WB)
+//-----------------------------------------------------------------------------
 
 // register file write
 always_comb
