@@ -245,12 +245,14 @@ btype btype_i;
 utype utype_i;
 jtype jtype_i;
 
+itype if_id_itype_i;
 itype id_ex_itype_i;
+btype id_ex_btype_i;
 
-btype ex_ma_btype_i;
 jtype ex_ma_jtype_i;
+btype ex_ma_btype_i;
 itype ex_ma_itype_i;
-stype ex_ma_stype_i;
+stype id_ex_stype_i;
 
 itype ma_wb_itype_i;
 utype ma_wb_utype_i;
@@ -266,15 +268,15 @@ always_comb begin
     utype_i = instruction;
     jtype_i = instruction;
 
-    id_ex_itype_i = if_id.instruction;
+    if_id_itype_i = if_id.instruction;
 
-    ex_ma_btype_i = id_ex.instruction;
-    ex_ma_jtype_i = id_ex.instruction;
-    ex_ma_itype_i = id_ex.instruction;
-    ex_ma_stype_i = id_ex.instruction;
+    id_ex_btype_i = id_ex.instruction;
+    id_ex_stype_i = id_ex.instruction;
+    id_ex_itype_i = id_ex.instruction;
 
-    ma_wb_itype_i = ex_ma.instruction;
-    ma_wb_utype_i = ex_ma.instruction;
+    ex_ma_btype_i = ex_ma.instruction;
+    ex_ma_jtype_i = ex_ma.instruction;
+    ex_ma_itype_i = ex_ma.instruction;
 
     wb_itype_i = ma_wb.instruction;
     wb_utype_i = ma_wb.instruction;
@@ -592,7 +594,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ex_ma.csr_wr <= id_ex.csr_wr;
 
         if (id_ex.instruction[6:2] == BRANCH)
-            case(ex_ma_btype_i.funct3)
+            case(id_ex_btype_i.funct3)
                 3'b000: ex_ma.branch <= (alu_out_z); // BEQ
                 3'b001: ex_ma.branch <= !(alu_out_z); // BNEQ
                 3'b100: ex_ma.branch <= (alu_out_n ^ alu_out_overflow); // BLT
@@ -602,8 +604,8 @@ always_ff @(posedge clk or negedge rst_n) begin
             endcase
 
         case(id_ex.instruction[6:2])
-            LOAD: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm});
-            STORE: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{ex_ma_stype_i.imm_b11_5[31]}},ex_ma_stype_i.imm_b11_5, ex_ma_stype_i.imm_b4_0});
+            LOAD: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{id_ex_itype_i.imm[31]}}, id_ex_itype_i.imm});
+            STORE: ex_ma.mem_addr <= id_ex.rf_r1 + $signed({{20{id_ex_stype_i.imm_b11_5[31]}},id_ex_stype_i.imm_b11_5, id_ex_stype_i.imm_b4_0});
             default: ex_ma.mem_addr <= 32'b0;
         endcase
     end
@@ -729,7 +731,7 @@ csr csr_u0(
     .wr(ma_wb.csr_wr),
 
     // input ID/EX
-    .address(id_ex_itype_i.imm),
+    .address(if_id_itype_i.imm),
 
     // input MA/WB
     .wrdata(ma_wb.csr_wrdata),
@@ -754,9 +756,9 @@ csr csr_u0(
 alu alu_u0(
     // input ID/EX
     .in1(id_ex.rf_r1), // always
-    .in2((id_ex.instruction[6:2] == OP_IMM) ? $signed({{20{ex_ma_itype_i.imm[31]}}, ex_ma_itype_i.imm}) : id_ex.rf_r2),
+    .in2((id_ex.instruction[6:2] == OP_IMM) ? $signed({{20{id_ex_itype_i.imm[31]}}, id_ex_itype_i.imm}) : id_ex.rf_r2),
     .use_shamt(id_ex.instruction[6:2] == OP_IMM),
-    .shamt(ex_ma_itype_i.imm[24:20]),
+    .shamt(id_ex_itype_i.imm[24:20]),
 
     
     // output EX/MA
