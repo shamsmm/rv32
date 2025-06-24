@@ -361,6 +361,11 @@ always_ff @(negedge clk) begin
     bubble_ex_ma = 0;
     bubble_ma_wb = (dbus_state == ONGOING);
     
+    // stall if the pipeline have any SYSTEM instruction (atomic and effects CSR)
+    // fallback to multicycle mode
+    if (if_id.instruction[6:2] == SYSTEM || id_ex.instruction[6:2] == SYSTEM || ex_ma.instruction[6:2] == SYSTEM || ma_wb.instruction[6:2] == SYSTEM)
+        bubble_if_id = 1'b1;    
+
     // stall if can't data forward
     if ((rf_r1_hazard && !can_forward_rf_r1) || (rf_r2_hazard && !can_forward_rf_r2))
         bubble_id_ex = 1'b1;
