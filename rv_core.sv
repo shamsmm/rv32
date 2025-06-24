@@ -357,9 +357,9 @@ always_ff @(negedge clk) begin
     else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
         bubble_id_ex = 1'b1;
 
-    stall_if_id = stall_if_id | stall_id_ex | bubble_id_ex;
-    stall_id_ex = stall_id_ex | stall_ex_ma | bubble_ex_ma;
     stall_ex_ma = stall_ex_ma | bubble_ma_wb;
+    stall_id_ex = stall_id_ex | stall_ex_ma | bubble_ex_ma;
+    stall_if_id = stall_if_id | stall_id_ex | bubble_id_ex;
 end
 
 //-----------------------------------------------------------------------------
@@ -426,6 +426,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     else if (bubble_if_id)
         if_id <= 0;
     else begin
+        if_id <= '0; // zero out everything
         if_id.instruction <= instruction; // combinational, preserve in stall
         if_id.pc <= ibus.addr;
         if (opcode[1:0] == 2'b11)
@@ -574,6 +575,7 @@ always_ff @(posedge clk or negedge rst_n)
     else if (bubble_id_ex)
         id_ex <= 0;
     else begin
+        id_ex <= '0;
         id_ex.instruction <= if_id.instruction;
         id_ex.pc <= if_id.pc;
         id_ex.alu_funct3 <= if_id.alu_funct3;
@@ -604,6 +606,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     else if (bubble_ex_ma)
         ex_ma <= 0;
     else begin
+        ex_ma <= '0;
         ex_ma.rf_r1 <= id_ex.rf_r1;
         ex_ma.rf_r2 <= id_ex.rf_r2;
         ex_ma.alu_out <= alu_out;
@@ -647,6 +650,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ma_wb <= 0;
     // else if (bubble_ma_wb) this is a degenerate case, relying on previous ex_ma to retain state
     else begin
+        ma_wb <= '0;
         ma_wb.instruction <= ex_ma.instruction;
         ma_wb.pc <= ex_ma.pc;
         ma_wb.branch <= ex_ma.branch;
