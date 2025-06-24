@@ -309,24 +309,42 @@ logic [31:0] csr_read;
 
 logic [31:0] correct_rf_r1, correct_rf_r2;
 
+logic rf_r1_hazard, rf_r2_hazard, can_forward_rf_r1, can_forward_rf_r2;
+
 always_comb begin
+    can_forward_rf_r1 = 0;
+    rf_r1_hazard = 1'b0;
+    can_forward_rf_r2 = 0;
+    rf_r2_hazard = 1'b0;
     correct_rf_r1 = rf_r1;
     correct_rf_r2 = rf_r2;
 
     // steal signals
     if (if_id.rf_rs1 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin //
+        rf_r1_hazard = 1'b1;
+        can_forward_rf_r1 = 1'b1;
         correct_rf_r1 = rf_wrdata; // steal
     end else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
-        if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
+        rf_r1_hazard = 1'b1;
+        if (ex_ma.instruction[6:2] inside {OP, OP_IMM}) begin
+            can_forward_rf_r1 = 1'b1;
             correct_rf_r1 = ex_ma.alu_out;
-    end
+        end
+    end else if (if_id.rf_rs1 == id_ex.rf_rd && id_ex.rf_rd != 5'b0)
+        rf_r1_hazard = 1'b1;
 
     if (if_id.rf_rs2 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin
+        rf_r2_hazard = 1'b1;
         correct_rf_r2 = rf_wrdata; // steal
+        can_forward_rf_r2 = 1'b1;
     end else if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
-        if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
+        rf_r2_hazard = 1'b1;
+        if (ex_ma.instruction[6:2] inside {OP, OP_IMM}) begin
             correct_rf_r2 = ex_ma.alu_out;
-    end
+            can_forward_rf_r2 = 1'b1;
+        end
+    end else if (if_id.rf_rs2 == id_ex.rf_rd && id_ex.rf_rd != 5'b0)
+        rf_r2_hazard = 1'b1;
 end
 
 //-----------------------------------------------------------------------------
@@ -344,9 +362,7 @@ always_ff @(negedge clk) begin
     bubble_ma_wb = (dbus_state == ONGOING);
     
     // stall if can't data forward
-    if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
-        bubble_id_ex = 1'b1;
-    else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0 && !(ex_ma.instruction[6:2] inside {OP, OP_IMM}))
+    if ((rf_r1_hazard && !can_forward_rf_r1) || (rf_r2_hazard && !can_forward_rf_r2))
         bubble_id_ex = 1'b1;
 
     stall_ex_ma = stall_ex_ma | bubble_ma_wb;
