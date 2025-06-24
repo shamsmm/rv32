@@ -255,7 +255,6 @@ itype ex_ma_itype_i;
 stype id_ex_stype_i;
 
 itype ma_wb_itype_i;
-utype ma_wb_utype_i;
 
 itype wb_itype_i;
 utype wb_utype_i;
@@ -277,6 +276,8 @@ always_comb begin
     ex_ma_btype_i = ex_ma.instruction;
     ex_ma_jtype_i = ex_ma.instruction;
     ex_ma_itype_i = ex_ma.instruction;
+
+    ma_wb_itype_i = ma_wb.instruction;
 
     wb_itype_i = ma_wb.instruction;
     wb_utype_i = ma_wb.instruction;
@@ -306,7 +307,7 @@ logic [31:0] csr_read;
 // Data Forwarding
 //-----------------------------------------------------------------------------
 
-logic [31:0] correct_rf_r1, correct_rf_r2, correct_csr_read;
+logic [31:0] correct_rf_r1, correct_rf_r2;
 
 always_comb begin
     correct_rf_r1 = rf_r1;
@@ -325,15 +326,6 @@ always_comb begin
     end else if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
         if (ex_ma.instruction[6:2] inside {OP, OP_IMM})
             correct_rf_r2 = ex_ma.alu_out;
-    end
-end
-
-always_comb begin
-    correct_csr_read = csr_read;
-
-    // steal signals
-    if (if_id_itype_i.imm == ma_wb_itype_i.imm && ma_wb.instruction[6:2] == SYSTEM && ma_wb.csr_wr) begin
-        correct_csr_read = ma_wb.csr_wrdata; // steal
     end
 end
 
@@ -610,7 +602,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ex_ma.rf_r1 <= id_ex.rf_r1;
         ex_ma.rf_r2 <= id_ex.rf_r2;
         ex_ma.alu_out <= alu_out;
-        ex_ma.csr_read <= correct_csr_read;
+        ex_ma.csr_read <= csr_read;
         ex_ma.instruction <= id_ex.instruction;
         ex_ma.tsize <= id_ex.tsize;
         ex_ma.pc <= id_ex.pc;
@@ -648,21 +640,22 @@ end
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) //  `|| flush` not added to allow next_pc to be propagated to pc
         ma_wb <= 0;
-    // else if (bubble_ma_wb) this is a degenerate case, relying on previous ex_ma to retain state
+    else if (bubble_ma_wb)
+        ma_wb <= 0;
     else begin
         ma_wb <= '0;
         ma_wb.instruction <= ex_ma.instruction;
         ma_wb.pc <= ex_ma.pc;
         ma_wb.branch <= ex_ma.branch;
         ma_wb.alu_out <= ex_ma.alu_out;
-        ma_wb.csr_read <= csr_read;
+        ma_wb.csr_read <= ex_ma.csr_read;
         ma_wb.rf_rd <= ex_ma.rf_rd;
         ma_wb.rf_wr <= ex_ma.rf_wr;
         ma_wb.csr_wr <= ex_ma.csr_wr;
         ma_wb.mem_rdata <= dbus.rdata; // TODO: who said it was ready?
 
         if(ex_ma.instruction[6:2] == SYSTEM)
-            case(itype_i.funct3)
+            case(ex_ma_itype_i.funct3)
                 `CSRRW: begin
                     ma_wb.csr_wrdata <= ex_ma.rf_r1;
                 end
@@ -757,6 +750,10 @@ rf rf_u0(
 //-----------------------------------------------------------------------------
 
 
+logic [11:0] csr_addr;
+
+assign csr_addr = ma_wb.csr_wr ? ma_wb_itype_i.imm : id_ex_itype_i.imm;
+
 csr csr_u0(
     .clk(clk),
     .rst_n(rst_n),
@@ -765,7 +762,7 @@ csr csr_u0(
     .wr(ma_wb.csr_wr),
 
     // input ID/EX
-    .address(if_id_itype_i.imm),
+    .address(csr_addr),
 
     // input MA/WB
     .wrdata(ma_wb.csr_wrdata),
