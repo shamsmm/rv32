@@ -134,7 +134,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     end     
     else if (flush)
         ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
-    else if (!stall_if_id) begin
+    else if (!stall_if_id && !bubble_if_id) begin
         ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
     end
 end
