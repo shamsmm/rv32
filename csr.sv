@@ -41,13 +41,13 @@ end
 
 always_ff @(posedge clk, negedge rst_n)
     if (!rst_n) begin
-        mvendorid = MVENDORID;
-        marchid = MARCHID;
-    end else begin
+        mvendorid <= MVENDORID;
+        marchid <= MARCHID;
+    end else if (wr) begin
         case(address)
-            12'h300: mstatus = wrdata;
-            12'h304: mie = wrdata;
-            12'h305: mtvec = wrdata;
+            12'h300: mstatus <= wrdata;
+            12'h304: mie <= wrdata;
+            12'h305: mtvec <= wrdata;
         endcase
     end
 

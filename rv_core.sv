@@ -361,7 +361,7 @@ always_ff @(negedge clk) begin
     bubble_ex_ma = 0;
     bubble_ma_wb = (dbus_state == ONGOING);
     
-    // stall if the pipeline have any SYSTEM instruction (atomic and effects CSR)
+    // stall if the pipeline have any SYSTEM instruction (atomic and effects CSR module) TODO: implement data forwarding or more fine stalls (hard)
     // fallback to multicycle mode
     if (if_id.instruction[6:2] == SYSTEM || id_ex.instruction[6:2] == SYSTEM || ex_ma.instruction[6:2] == SYSTEM || ma_wb.instruction[6:2] == SYSTEM)
         bubble_if_id = 1'b1;    
@@ -693,7 +693,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                     ma_wb.csr_wrdata <= ex_ma.csr_read | {27'b0, ex_ma_itype_i.rs1};
                 end
                 `CSRRCI: begin
-                    ma_wb.csr_wrdata <= ex_ma.csr_read & {27'b0, (~ex_ma_itype_i.rs1)};
+                    ma_wb.csr_wrdata <= ex_ma.csr_read & ~({27'b0, ex_ma_itype_i.rs1});
                 end
             endcase
 
