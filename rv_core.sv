@@ -1,6 +1,8 @@
 import instructions::*;
 import bus_if_types_pkg::*;
 
+`define NOP 32'h00000013
+
 // TODO: convert to enum
 `include "funct3.sv" // funct3 encoded values in BRANCH and SYSTEM major opcodes
 
@@ -35,7 +37,7 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 logic halted; // TODO: wire up to pipeline
 
 logic hazard = 1'b0;
-logic stall_if_id, stall_id_ex, stall_ex_ma, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
+logic stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
 logic flush; // if jump or branch was taken
 logic [2:0] pipeline_fill;
 
@@ -95,27 +97,30 @@ always_comb
 
 logic [31:0] pc;
 
-typedef enum logic [1:0] {IDLE, ONGOING} bus_state_e;
+typedef enum logic [1:0] {IDLE, DELAY, ONGOING} bus_state_e;
 
 bus_state_e ibus_state;
 bus_state_e dbus_state;
 
+// TODO: pipeline the bus!
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
-        ibus_state <= IDLE;
+        ibus_state <= ONGOING;
     else
         case(ibus_state)
-            IDLE: ibus_state <= ibus.bstart && !ibus.bdone ? ONGOING : IDLE;
-            ONGOING: ibus_state <= ibus.bdone ? IDLE : ONGOING;
+            ONGOING: ibus_state <= ibus.bdone ? ((flush || (!bubble_instruction && !stall_if_id)) ? ONGOING : IDLE) : ONGOING;
+            IDLE: ibus_state <= (flush || (!bubble_instruction && !stall_if_id)) ? ONGOING : IDLE;
         endcase
 end
 
+// TODO: make sure we read after outputting address! (will fail in peripherals outputting in same cycle!)
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         dbus_state <= IDLE;
     else
         case(dbus_state)
-            IDLE: dbus_state <= dbus.bstart && !dbus.bdone ? ONGOING : IDLE;
+            IDLE: dbus_state <= dbus.bstart && !dbus.bdone ? ONGOING : (dbus.bstart && dbus.bdone ? DELAY : IDLE);
+            DELAY: dbus_state <= IDLE;
             ONGOING: dbus_state <= dbus.bdone ? IDLE : ONGOING;
         endcase
 end
@@ -134,17 +139,23 @@ always_ff @(posedge clk or negedge rst_n) begin
     end     
     else if (flush)
         ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
-    else if (!stall_if_id && !bubble_if_id) begin
+    else if (!bubble_instruction && !stall_if_id) begin
         ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
     end
 end
 
 
 always_comb begin
-    instruction = ibus.rdata;
+    if (!bubble_instruction) begin
+        instruction = ibus.rdata;
+        instruction_pc = ibus.addr;
+    end else begin
+        instruction = `NOP;
+        instruction_pc = 0;
+    end
 end
 
-logic [31:0] instruction;
+logic [31:0] instruction, instruction_pc;
 
 
 //-----------------------------------------------------------------------------
@@ -351,24 +362,26 @@ end
 // Hazard Detection
 //-----------------------------------------------------------------------------
 
-always_ff @(negedge clk) begin
+// next clock edge
+always_comb begin
     stall_if_id = 0;
     stall_id_ex = 0;
     stall_ex_ma = 0;
     
-    bubble_if_id = (ibus_state == ONGOING);
+    bubble_instruction = (ibus_state != IDLE);
+    bubble_if_id = 0; // TODO: pipeline it!
     bubble_id_ex = 0;
     bubble_ex_ma = 0;
-    bubble_ma_wb = (dbus_state == ONGOING);
+    bubble_ma_wb = (dbus_state != IDLE); // TODO: make sure at least lasts 1 more instruction to latch output (in a more cleaner way)
     
     // stall if the pipeline have any SYSTEM instruction (atomic and effects CSR module) TODO: implement data forwarding or more fine stalls (hard)
     // fallback to multicycle mode
     if (if_id.instruction[6:2] == SYSTEM || id_ex.instruction[6:2] == SYSTEM || ex_ma.instruction[6:2] == SYSTEM || ma_wb.instruction[6:2] == SYSTEM)
-        bubble_if_id = 1'b1;    
+        bubble_instruction = 1'b1;    
 
     // stall if can't data forward
     if ((rf_r1_hazard && !can_forward_rf_r1) || (rf_r2_hazard && !can_forward_rf_r2))
-        bubble_id_ex = 1'b1;
+        bubble_id_ex = 1'b1; // next id_ex is bubbled
 
     stall_ex_ma = stall_ex_ma | bubble_ma_wb;
     stall_id_ex = stall_id_ex | stall_ex_ma | bubble_ex_ma;
@@ -441,7 +454,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     else begin
         if_id <= '0; // zero out everything
         if_id.instruction <= instruction; // combinational, preserve in stall
-        if_id.pc <= ibus.addr;
+        if_id.pc <= instruction_pc;
         if (opcode[1:0] == 2'b11)
             case(opcode[6:5])
                 2'b00:
@@ -659,10 +672,10 @@ end
 
 // pc write and memory read and CSRs
 always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) //  `|| flush` not added to allow next_pc to be propagated to pc
+    if (!rst_n || flush) // all stages are flushed, notice the last ma_wb was a branch or jump so the moved in instruction is fake
         ma_wb <= 0;
-    else if (bubble_ma_wb)
-        ma_wb <= 0;
+    //else if (bubble_ma_wb) degenerate bubble, need to obtain dbus.rdata, rely on stalling ex_ma TODO: rename to `recalculate`
+    //    ma_wb <= 0;
     else begin
         ma_wb <= '0;
         ma_wb.instruction <= ex_ma.instruction;
