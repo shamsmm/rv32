@@ -19,22 +19,20 @@ always_comb begin
     endcase
 end
 
-always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin 
-        mtime <= 0;
-    end else begin
-        mtime <= mtime + 1; // TODO: should be writable but let's violate spec because why not
-    end
-end
-
 always_ff @( posedge clk or negedge rst_n) begin
-    if (rst_n) begin
+    if (!rst_n) begin
+        mtime <= 0;
         mtimecmp <= 0;
     end
-    else if (bus.ss && bus.ttype == WRITE) begin
-        case(bus.addr[27:0])
-            28'h2004000: mtimecmp <= bus.wdata;
-        endcase
+    else begin 
+        mtime <= mtime + 1; // TODO: make sure synthesis prioritizes last NBA
+        
+        if (bus.ss && bus.ttype == WRITE) begin
+            case(bus.addr[27:0])
+                28'h2004000: mtimecmp <= bus.wdata;
+                28'h200BFF8: mtime <= bus.wdata;
+            endcase
+        end
     end
 end
 
