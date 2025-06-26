@@ -190,7 +190,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     else if (return_from_interrupt)
         ibus.addr <= mepc;
     else if (interrupt)
-        ibus.addr <= mtvec;
+        ibus.addr <= {mtvec.base, 2'b00};
     else if (control_hazard)
         ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
     else if (!bubble_instruction && !stall_if_id) begin
@@ -391,31 +391,33 @@ always_comb begin
     correct_rf_r2 = rf_r2;
 
     // steal signals
-    if (if_id.rf_rs1 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin //
+    if (if_id.rf_rs1 == id_ex.rf_rd && id_ex.rf_rd != 5'b0)
         rf_r1_hazard = 1'b1;
-        can_forward_rf_r1 = 1'b1;
-        correct_rf_r1 = rf_wrdata; // steal
-    end else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
+    else if (if_id.rf_rs1 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
         rf_r1_hazard = 1'b1;
         if (ex_ma.instruction[6:2] inside {OP, OP_IMM}) begin
             can_forward_rf_r1 = 1'b1;
             correct_rf_r1 = ex_ma.alu_out;
         end
-    end else if (if_id.rf_rs1 == id_ex.rf_rd && id_ex.rf_rd != 5'b0)
+    end else if (if_id.rf_rs1 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin //
         rf_r1_hazard = 1'b1;
+        can_forward_rf_r1 = 1'b1;
+        correct_rf_r1 = rf_wrdata; // steal
+    end
 
-    if (if_id.rf_rs2 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin
+    if (if_id.rf_rs2 == id_ex.rf_rd && id_ex.rf_rd != 5'b0)
         rf_r2_hazard = 1'b1;
-        correct_rf_r2 = rf_wrdata; // steal
-        can_forward_rf_r2 = 1'b1;
-    end else if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
+    else if (if_id.rf_rs2 == ex_ma.rf_rd && ex_ma.rf_rd != 5'b0) begin // steal if only from alu
         rf_r2_hazard = 1'b1;
         if (ex_ma.instruction[6:2] inside {OP, OP_IMM}) begin
             correct_rf_r2 = ex_ma.alu_out;
             can_forward_rf_r2 = 1'b1;
         end
-    end else if (if_id.rf_rs2 == id_ex.rf_rd && id_ex.rf_rd != 5'b0)
+    end else if (if_id.rf_rs2 == ma_wb.rf_rd && ma_wb.rf_rd != 5'b0) begin
         rf_r2_hazard = 1'b1;
+        correct_rf_r2 = rf_wrdata; // steal
+        can_forward_rf_r2 = 1'b1;
+    end 
 end
 
 //-----------------------------------------------------------------------------
