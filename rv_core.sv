@@ -34,28 +34,32 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 //-----------------------------------------------------------------------------
 
 
+privilege_t privilege;
+
 logic halted; // TODO: wire up to pipeline
 
 logic hazard = 1'b0;
-logic stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
-logic flush; // if jump or branch was taken
+logic stall, stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
+logic flush, control_hazard; // if jump or branch was taken
 logic [2:0] pipeline_fill;
+
+assign flush = control_hazard | interrupt | return_from_interrupt;
 
 always_ff @(negedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        flush <= 0;
+        control_hazard <= 0;
     end else begin
         case(ma_wb.instruction[6:2])
             BRANCH: begin 
-                flush <= ma_wb.branch;
+                control_hazard <= ma_wb.branch;
             end
             JALR: begin
-                flush <= 1'b1;
+                control_hazard <= 1'b1;
             end
             JAL: begin
-                flush <= 1'b1;
+                control_hazard <= 1'b1;
             end
-            default: flush <= 1'b0;
+            default: control_hazard <= 1'b0;
         endcase
     end
 end
@@ -90,6 +94,52 @@ always_comb
         RESUMING: next_hstate = NORMAL;
         default: next_hstate = NORMAL;
     endcase
+
+//-----------------------------------------------------------------------------
+// Interrupts and Traps
+//-----------------------------------------------------------------------------
+
+logic sync_int;
+logic async_int;
+
+logic interrupt, return_from_interrupt;
+
+logic [31:0] pc_to_store;
+mcause_t mcause_to_store;
+
+always_ff @(negedge clk) begin
+    return_from_interrupt = if_id.mret; // higher priority
+    interrupt = 0;
+    mcause_to_store = 0;
+    pc_to_store = 0;
+    sync_int =  if_id.ecall | if_id.illegal_instruction;
+    async_int = irq_ext | irq_sw | irq_timer;
+    
+    if (sync_int) begin
+        pc_to_store = instruction_pc;
+        
+    end else if (async_int)
+        pc_to_store = ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : if_id.pc));
+
+    if (mstatus.MIE) begin
+        if (sync_int) begin
+            interrupt = 1'b1;
+            mcause_to_store.interr = 0;
+
+            mcause_to_store.code = if_id.ecall ? 11 : 2; // 11 and 2 from the spec
+        end else if (async_int) begin
+            interrupt = 1'b1;
+            mcause_to_store.interr = 1;
+
+            if ((irq_ext | mip.MEIP) && mie.MEIE)
+                mcause_to_store.code = 11;
+            else if ((irq_timer | mip.MTIP) && mie.MTIE)
+                mcause_to_store.code = 7;
+            else if ((irq_sw | mip.MSIP) && mie.MSIE)    
+                mcause_to_store.code = 3;
+        end
+    end
+end
 
 //-----------------------------------------------------------------------------
 // PC and I-bus interface
@@ -137,7 +187,11 @@ always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         ibus.addr <= INITIAL_PC;
     end     
-    else if (flush)
+    else if (return_from_interrupt)
+        ibus.addr <= mepc;
+    else if (interrupt)
+        ibus.addr <= mtvec;
+    else if (control_hazard)
         ibus.addr <= ma_wb.next_pc; // must fetch from that instruction (discarding all that entered pipeline)
     else if (!bubble_instruction && !stall_if_id) begin
         ibus.addr <= ibus.addr + 4; // assume branches are not taken, includes (unconditional jumps) and let the pipeline flush when it has to
@@ -167,6 +221,10 @@ logic [31:0] instruction, instruction_pc;
 struct packed {
     logic [31:0] instruction;
     logic [31:0] pc;
+    logic illegal_instruction;
+    logic wfi;
+    logic ecall;
+    logic mret;
 
     // intrinsic
     logic [4:0] rf_rs1;
@@ -305,10 +363,12 @@ logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 // Exposed CSRs
 //-----------------------------------------------------------------------------
 
+logic [31:0] mepc;
 mstatus_t mstatus;
 mtvec_t mtvec;
 mcause_t mcause;
-logic [31:0] mip, mie;
+mip_t mip;
+mie_t mie;
 
 // Output
 logic [31:0] csr_read;
@@ -364,9 +424,12 @@ end
 
 // next clock edge
 always_comb begin
-    stall_if_id = 0;
-    stall_id_ex = 0;
-    stall_ex_ma = 0;
+    // TODO: make sure instruction entering pipeline is ok
+    stall =  if_id.wfi && !interrupt; // WFI
+
+    stall_if_id = stall;
+    stall_id_ex = stall;
+    stall_ex_ma = stall;
     
     bubble_instruction = (ibus_state != IDLE);
     bubble_if_id = 0; // TODO: pipeline it!
@@ -471,9 +534,9 @@ always_ff @(posedge clk or negedge rst_n) begin
                             if_id.mem_rd <= 1'b1;
                             
                         end
-                        3'b001: assert (mopcode_t'(opcode[6:2]) == LOAD_FP); // LOAD-FP
-                        3'b010: assert (mopcode_t'(opcode[6:2]) == custom_0); // custom-0
-                        3'b011: assert (mopcode_t'(opcode[6:2]) == MISC_MEM); // MISC-MEM
+                        //3'b001: assert (mopcode_t'(opcode[6:2]) == LOAD_FP); // LOAD-FP
+                        //3'b010: assert (mopcode_t'(opcode[6:2]) == custom_0); // custom-0
+                        //3'b011: assert (mopcode_t'(opcode[6:2]) == MISC_MEM); // MISC-MEM
                         3'b100: begin // OP-IMM
                             assert (mopcode_t'(opcode[6:2]) == OP_IMM);
                             if_id.rf_rd <= itype_i.rd;
@@ -488,6 +551,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                             if_id.rf_rd <= utype_i.rd;
                         end
                         3'b110: assert (mopcode_t'(opcode[6:2]) == OP_IMM_32); // OP-IMM-32
+                        default: if_id.illegal_instruction <= 1;
                     endcase
                 2'b01:
                     case(opcode[4:2])
@@ -501,9 +565,9 @@ always_ff @(posedge clk or negedge rst_n) begin
 
                             if_id.tsize <= tsize_e'(stype_i.funct3[14:12]);
                         end
-                        3'b001: assert (mopcode_t'(opcode[6:2]) == STORE_FP); // STORE-FP
-                        3'b010: assert (mopcode_t'(opcode[6:2]) == custom_1); // custom-1
-                        3'b011: assert (mopcode_t'(opcode[6:2]) == AMO); // AMO
+                        //3'b001: assert (mopcode_t'(opcode[6:2]) == STORE_FP); // STORE-FP
+                        //3'b010: assert (mopcode_t'(opcode[6:2]) == custom_1); // custom-1
+                        //3'b011: assert (mopcode_t'(opcode[6:2]) == AMO); // AMO
                         3'b100: begin // OP
                             assert (mopcode_t'(opcode[6:2]) == OP);
                             if_id.rf_rd <= rtype_i.rd;
@@ -519,17 +583,19 @@ always_ff @(posedge clk or negedge rst_n) begin
                             if_id.rf_wr <= 1'b1;
                             if_id.rf_rd <= utype_i.rd;
                         end
-                        3'b110: assert (mopcode_t'(opcode[6:2]) == OP_32); // OP-32
+                        //3'b110: assert (mopcode_t'(opcode[6:2]) == OP_32); // OP-32
+                        default: if_id.illegal_instruction <= 1;
                     endcase
                 2'b10:
                     case(opcode[4:2])
-                        3'b000: assert (mopcode_t'(opcode[6:2]) == MADD); // MADD
-                        3'b001: assert (mopcode_t'(opcode[6:2]) == MSUB); // MSUB
-                        3'b010: assert (mopcode_t'(opcode[6:2]) == NMSUB); // NMSUB
-                        3'b011: assert (mopcode_t'(opcode[6:2]) == NMADD); // NMADD
-                        3'b100: assert (mopcode_t'(opcode[6:2]) == OP_FP); // OP-FP
-                        3'b101: assert (mopcode_t'(opcode[6:2]) == OP_V); // OP-V
-                        3'b110: assert (mopcode_t'(opcode[6:2]) == custom_2); // custom-2/RV128
+                        //3'b000: assert (mopcode_t'(opcode[6:2]) == MADD); // MADD
+                        //3'b001: assert (mopcode_t'(opcode[6:2]) == MSUB); // MSUB
+                        //3'b010: assert (mopcode_t'(opcode[6:2]) == NMSUB); // NMSUB
+                        //3'b011: assert (mopcode_t'(opcode[6:2]) == NMADD); // NMADD
+                        //3'b100: assert (mopcode_t'(opcode[6:2]) == OP_FP); // OP-FP
+                        //3'b101: assert (mopcode_t'(opcode[6:2]) == OP_V); // OP-V
+                        //3'b110: assert (mopcode_t'(opcode[6:2]) == custom_2); // custom-2/RV128
+                        default: if_id.illegal_instruction <= 1;
                     endcase
                 2'b11:
                     case(opcode[4:2])
@@ -546,45 +612,67 @@ always_ff @(posedge clk or negedge rst_n) begin
                             if_id.rf_rd <= itype_i.rd;
                             if_id.rf_wr <= 1'b1;
                         end
-                        3'b010: ; // reserved
+                        //3'b010: ; // reserved
                         3'b011: begin // JAL
                             assert (mopcode_t'(opcode[6:2]) == JAL);
                             if_id.rf_rd <= jtype_i.rd;
                             if_id.rf_wr <= 1'b1;
                         end
                         3'b100: begin // SYSTEM
+                            // Ensured in Hazard Detection Unit only 1 instruction exists, no other instruction in pipeline
                             assert (mopcode_t'(opcode[6:2]) == SYSTEM);
+                            if (itype_i.funct3 inside {`CSRRW, `CSRRS, `CSRRC, `CSRRWI, `CSRRSI, `CSRRCI}) begin
+                                if_id.rf_wr <= 1;
+                                if_id.rf_rd <= itype_i.rd;
+                                if_id.rf_rs1 <= itype_i.rs1;
 
-                            if_id.rf_wr <= 1;
-                            if_id.rf_rd <= itype_i.rd;
-                            if_id.rf_rs1 <= itype_i.rs1;
+                                // zero extend csr_addr
 
-                            // zero extend csr_addr
-
-                            case(itype_i.funct3)
-                                `CSRRW: begin
-                                    if_id.csr_wr <= 1;
-                                end
-                                `CSRRS: begin
-                                    if_id.csr_wr <= itype_i.rs1 != 0;
-                                end
-                                `CSRRC: begin
-                                    if_id.csr_wr <= itype_i.rs1 != 0;
-                                end
-                                `CSRRWI: begin
-                                    if_id.csr_wr <= 1;
-                                end
-                                `CSRRSI: begin
-                                    if_id.csr_wr <= itype_i.rs1 != 0;
-                                end
-                                `CSRRCI: begin
-                                    if_id.csr_wr <= itype_i.rs1 != 0;
-                                end
-                            endcase
+                                case(itype_i.funct3)
+                                    `CSRRW: begin
+                                        if_id.csr_wr <= 1;
+                                    end
+                                    `CSRRS: begin
+                                        if_id.csr_wr <= itype_i.rs1 != 0;
+                                    end
+                                    `CSRRC: begin
+                                        if_id.csr_wr <= itype_i.rs1 != 0;
+                                    end
+                                    `CSRRWI: begin
+                                        if_id.csr_wr <= 1;
+                                    end
+                                    `CSRRSI: begin
+                                        if_id.csr_wr <= itype_i.rs1 != 0;
+                                    end
+                                    `CSRRCI: begin
+                                        if_id.csr_wr <= itype_i.rs1 != 0;
+                                    end
+                                    default: if_id.illegal_instruction <= 1;
+                                endcase
+                            end else if (itype_i.funct3 == 3'b000) begin
+                                case(itype_i.imm)
+                                    12'b000000000000: begin // ECALL
+                                        if_id.ecall <= 1'b1;
+                                    end
+                                    12'b000000000001: begin // EBREAK
+                                    end
+                                    12'b000100000010: begin // SRET
+                                    end
+                                    12'b001100000010: begin // MRET
+                                        if_id.mret <= 1'b1;
+                                    end
+                                    12'b000100000101: begin // WFI
+                                        if_id.wfi <= 1'b1;
+                                    end
+                                    default: if_id.illegal_instruction <= 1;
+                                endcase
+                            end
                         end
-                        3'b101: assert (mopcode_t'(opcode[6:2]) == OP_VE); // OP-VE
-                        3'b110: assert (mopcode_t'(opcode[6:2]) == custom_3); // custom-3/RV128
+                        //3'b101: assert (mopcode_t'(opcode[6:2]) == OP_VE); // OP-VE
+                        //3'b110: assert (mopcode_t'(opcode[6:2]) == custom_3); // custom-3/RV128
+                        default: if_id.illegal_instruction <= 1;
                     endcase
+                    default: if_id.illegal_instruction <= 1;
             endcase
     end
 end
@@ -801,6 +889,16 @@ csr csr_u0(
     // input MA/WB
     .wrdata(ma_wb.csr_wrdata),
 
+    // interrupt store and restoring
+    // TODO: privilege escaltion and restore
+    .pc(pc_to_store),
+    .privilege(privilege),
+    .xEIP(irq_ext),
+    .xTIP(irq_timer),
+    .xSIP(irq_sw),
+    .interrupt(interrupt),
+    .return_from_interrupt(return_from_interrupt),
+
     // output EX/MA
     .out(csr_read),
 
@@ -810,7 +908,8 @@ csr csr_u0(
     .o_mie(mie),
     .o_mip(mip),
     .o_mtvec(mtvec),
-    .o_mcause(mcause)
+    .o_mcause(mcause),
+    .o_mepc(mepc)
 );
 
 //-----------------------------------------------------------------------------

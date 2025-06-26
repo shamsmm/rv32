@@ -12,6 +12,7 @@ assign irq_timer = mtime >= mtimecmp;
 
 always_comb begin
     bus.bdone = 1'b1; // all thing take one clock cycle
+    bus.rdata = 32'b0;
 
     case(bus.addr[27:0])
         28'h2004000: bus.rdata = mtimecmp; // TODO: should be 64-bit wide but we violate spec here

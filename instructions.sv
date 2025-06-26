@@ -88,4 +88,42 @@ typedef struct packed {
     bit [30:0] code;
 } mcause_t;
 
+typedef struct packed {
+    bit [31:14] _zero_31_14;
+    bit LCOFIP;
+    bit _zero_12;
+    bit MEIP;
+    bit _zero_10;
+    bit SEIP;
+    bit _zero_8;
+    bit MTIP;
+    bit _zero_6;
+    bit STIP;
+    bit _zero_4;
+    bit MSIP;
+    bit _zero_2;
+    bit SSIP;
+    bit _zero_0;
+} mip_t;
+
+typedef struct packed {
+    bit [31:14] _zero_31_14;
+    bit LCOFIE;
+    bit _zero_12;
+    bit MEIE;
+    bit _zero_10;
+    bit SEIE;
+    bit _zero_8;
+    bit MTIE;
+    bit _zero_6;
+    bit STIE;
+    bit _zero_4;
+    bit MSIE;
+    bit _zero_2;
+    bit SSIE;
+    bit _zero_0;
+} mie_t;
+
+typedef enum logic [1:0] {M = 2'b11, S = 2'b01, U = 2'b00} privilege_t;
+
 endpackage
