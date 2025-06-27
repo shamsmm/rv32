@@ -41,7 +41,6 @@ logic halted; // TODO: wire up to pipeline
 logic hazard = 1'b0;
 logic stall, stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
 logic flush, control_hazard; // if jump or branch was taken
-logic [2:0] pipeline_fill;
 
 assign flush = control_hazard | interrupt | return_from_interrupt;
 
@@ -63,12 +62,6 @@ always_ff @(negedge clk or negedge rst_n) begin
         endcase
     end
 end
-
-always_ff @(posedge clk, negedge rst_n) 
-    if (!rst_n || flush)
-        pipeline_fill <= 0;
-    else if (!stall_if_id)
-        pipeline_fill <= pipeline_fill == 4 ? pipeline_fill : pipeline_fill + 1;
 
 //-----------------------------------------------------------------------------
 // Debuging
@@ -108,25 +101,25 @@ logic [31:0] pc_to_store;
 mcause_t mcause_to_store;
 
 always_ff @(negedge clk) begin
-    return_from_interrupt = if_id.mret; // higher priority
+    return_from_interrupt = ma_wb.mret; // higher priority // only signal return_from_interrupt when really 
     interrupt = 0;
     mcause_to_store = 0;
     pc_to_store = 0;
-    sync_int =  if_id.ecall | if_id.illegal_instruction;
-    async_int = irq_ext | irq_sw | irq_timer;
+    sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
+    async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
     
     if (sync_int) begin
-        pc_to_store = instruction_pc;
-        
+        pc_to_store = ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
+        // instructuion_pc may be bubbled take ibus.addr always correct next fetch
     end else if (async_int)
-        pc_to_store = ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : if_id.pc));
+        pc_to_store = ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
 
     if (mstatus.MIE) begin
         if (sync_int) begin
             interrupt = 1'b1;
             mcause_to_store.interr = 0;
 
-            mcause_to_store.code = if_id.ecall ? 11 : 2; // 11 and 2 from the spec
+            mcause_to_store.code = ma_wb.ecall ? 11 : 2; // 11 and 2 from the spec
         end else if (async_int) begin
             interrupt = 1'b1;
             mcause_to_store.interr = 1;
@@ -147,10 +140,10 @@ end
 
 logic [31:0] pc;
 
-typedef enum logic [1:0] {IDLE, DELAY, ONGOING} bus_state_e;
+typedef enum logic [1:0] {IDLE, START, DELAY, ONGOING} bus_state_e;
 
 bus_state_e ibus_state;
-bus_state_e dbus_state;
+bus_state_e dbus_state, next_dbus_state;
 
 // TODO: pipeline the bus!
 always_ff @(posedge clk or negedge rst_n) begin
@@ -168,11 +161,25 @@ always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         dbus_state <= IDLE;
     else
-        case(dbus_state)
-            IDLE: dbus_state <= dbus.bstart && !dbus.bdone ? ONGOING : (dbus.bstart && dbus.bdone ? DELAY : IDLE);
-            DELAY: dbus_state <= IDLE;
-            ONGOING: dbus_state <= dbus.bdone ? IDLE : ONGOING;
-        endcase
+        dbus_state <= next_dbus_state;
+end
+
+logic dbus_transaction_finished;
+always_comb begin
+    dbus.bstart = dbus_state == START;
+    dbus_transaction_finished = (dbus_state == DELAY) | ((dbus_state == ONGOING) && dbus.bdone);
+end
+
+logic start_dbus_transaction;
+assign start_dbus_transaction = ex_ma.mem_wr | ex_ma.mem_rd;
+
+always_comb begin
+    case(dbus_state)
+        IDLE: next_dbus_state =  start_dbus_transaction ? START : IDLE;
+        START: next_dbus_state = dbus.bdone ? DELAY : ONGOING;
+        DELAY: next_dbus_state = IDLE;
+        ONGOING: next_dbus_state = dbus.bdone ? IDLE : ONGOING;
+    endcase
 end
 
 always_comb begin
@@ -221,6 +228,8 @@ logic [31:0] instruction, instruction_pc;
 struct packed {
     logic [31:0] instruction;
     logic [31:0] pc;
+
+    // FATAL: only flag when it reaches ma_wb, pipeline still has instructions!
     logic illegal_instruction;
     logic wfi;
     logic ecall;
@@ -257,6 +266,12 @@ struct packed {
     logic mem_wr;
     logic mem_rd;
     logic csr_wr;
+
+    // flags
+    logic illegal_instruction;
+    logic wfi;
+    logic ecall;
+    logic mret;
 } id_ex;
 
 struct packed {
@@ -283,6 +298,12 @@ struct packed {
     logic alu_out_overflow;
     logic alu_out_z;
     logic branch;
+
+    // flags
+    logic illegal_instruction;
+    logic wfi;
+    logic ecall;
+    logic mret;
 } ex_ma;
 
 struct packed {
@@ -301,6 +322,12 @@ struct packed {
     logic csr_wr;
     logic [31:0] csr_wrdata;
     logic [31:0] next_pc;
+
+    // flags
+    logic illegal_instruction;
+    logic wfi;
+    logic ecall;
+    logic mret;
 } ma_wb;
 
 //-----------------------------------------------------------------------------
@@ -427,7 +454,7 @@ end
 // next clock edge
 always_comb begin
     // TODO: make sure instruction entering pipeline is ok
-    stall =  if_id.wfi && !interrupt; // WFI
+    stall =  ma_wb.wfi && !interrupt; // WFI
 
     stall_if_id = stall;
     stall_id_ex = stall;
@@ -437,11 +464,15 @@ always_comb begin
     bubble_if_id = 0; // TODO: pipeline it!
     bubble_id_ex = 0;
     bubble_ex_ma = 0;
-    bubble_ma_wb = (dbus_state != IDLE); // TODO: make sure at least lasts 1 more instruction to latch output (in a more cleaner way)
+    bubble_ma_wb = start_dbus_transaction && !dbus_transaction_finished; // TODO: make sure at least lasts 1 more instruction to latch output (in a more cleaner way)
     
     // stall if the pipeline have any SYSTEM instruction (atomic and effects CSR module) TODO: implement data forwarding or more fine stalls (hard)
     // fallback to multicycle mode
     if (if_id.instruction[6:2] == SYSTEM || id_ex.instruction[6:2] == SYSTEM || ex_ma.instruction[6:2] == SYSTEM || ma_wb.instruction[6:2] == SYSTEM)
+        bubble_instruction = 1'b1;    
+
+    // stall if pipeline has an illegal instruction
+    if (if_id.illegal_instruction || id_ex.illegal_instruction || ex_ma.illegal_instruction || ma_wb.illegal_instruction)
         bubble_instruction = 1'b1;    
 
     // stall if can't data forward
@@ -459,7 +490,7 @@ end
 
 always_comb begin
     dbus.wdata = ex_ma.rf_r2; // always writing from data in register
-    dbus.bstart = ex_ma.mem_wr | ex_ma.mem_rd;
+    // dbus.bstart = ; handle by FSM
     dbus.ttype = ex_ma.mem_wr ? WRITE : READ;
     dbus.breq = dbus.bstart; // TODO: breq and bstart are same? either have clear sepearion in logic or collapse into one
     dbus.addr = ex_ma.mem_addr;
@@ -704,6 +735,12 @@ always_ff @(posedge clk or negedge rst_n)
         id_ex.mem_wr <= if_id.mem_wr;
         id_ex.mem_rd <= if_id.mem_rd;
         id_ex.csr_wr <= if_id.csr_wr;
+
+        // flags
+        id_ex.illegal_instruction <= if_id.illegal_instruction;
+        id_ex.wfi <= if_id.wfi;
+        id_ex.ecall <= if_id.ecall;
+        id_ex.mret <= if_id.mret;
     end
 
 
@@ -736,6 +773,12 @@ always_ff @(posedge clk or negedge rst_n) begin
         ex_ma.rf_wr <= id_ex.rf_wr;
         ex_ma.rf_rd <= id_ex.rf_rd;
         ex_ma.csr_wr <= id_ex.csr_wr;
+
+        // flags
+        ex_ma.illegal_instruction <= id_ex.illegal_instruction;
+        ex_ma.wfi <= id_ex.wfi;
+        ex_ma.ecall <= id_ex.ecall;
+        ex_ma.mret <= id_ex.mret;
 
         if (id_ex.instruction[6:2] == BRANCH)
             case(id_ex_btype_i.funct3)
@@ -777,6 +820,12 @@ always_ff @(posedge clk or negedge rst_n) begin
         ma_wb.rf_wr <= ex_ma.rf_wr;
         ma_wb.csr_wr <= ex_ma.csr_wr;
         ma_wb.mem_rdata <= dbus.rdata; // TODO: who said it was ready?
+
+        // flags
+        ma_wb.illegal_instruction <= ex_ma.illegal_instruction;
+        ma_wb.wfi <= ex_ma.wfi;
+        ma_wb.ecall <= ex_ma.ecall;
+        ma_wb.mret <= ex_ma.mret;
 
         if(ex_ma.instruction[6:2] == SYSTEM)
             case(ex_ma_itype_i.funct3)
