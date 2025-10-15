@@ -9,6 +9,10 @@ module csr #(parameter int unsigned MHARTID = 0, MVENDORID = 0, MARCHID = 0) (
     input bit [31:0] wrdata,
     input [31:0] pc,
     input bit interrupt,
+
+    input logic dbg,
+    input logic [8:6] dbg_cause,
+
     input bit return_from_interrupt,
     input privilege_t privilege,
     input xEIP, xTIP, xSIP,
@@ -18,7 +22,8 @@ module csr #(parameter int unsigned MHARTID = 0, MVENDORID = 0, MARCHID = 0) (
     output logic [31:0] o_mie, o_mip,
     output mtvec_t o_mtvec,
     output mcause_t o_mcause,
-    output bit [31:0] o_mepc
+    output bit [31:0] o_mepc, o_dpc,
+    output dcsr_t o_dcsr
 );
 
 always_comb begin
@@ -28,15 +33,17 @@ always_comb begin
     o_mstatus = mstatus;
     o_mtvec = mtvec;
     o_mepc = mepc;
+    o_dpc = dpc;
 end
 
-logic [31:0] mvendorid, marchid, mhartid, mepc;
+logic [31:0] mvendorid, marchid, mhartid, mepc, dpc, dscratch0, dscratch1;
 
 mip_t mip;
 mie_t mie;
 mstatus_t mstatus;
 mtvec_t mtvec;
 mcause_t mcause;
+dcsr_t dcsr;
 
 always_comb begin
     case(address)
@@ -49,6 +56,10 @@ always_comb begin
         12'h341: out = mepc;
         12'h342: out = mcause;
         12'h344: out = mip;
+        12'h7b0: out = dcsr;
+        12'h7b1: out = dpc;
+        12'h7b2: out = dscratch0;
+        12'h7b3: out = dscratch1;
         default: out = 0; 
     endcase
 end
@@ -81,6 +92,9 @@ always_ff @(posedge clk, negedge rst_n)
             mstatus.MPP <= privilege;
             mstatus.MPIE <= mstatus.MIE;
             mstatus.MIE <= 0;
+        end else if (dbg) begin
+            dpc <= pc;
+            dcsr.cause <= dbg_cause;
         end else if (wr) begin
             case(address)
                 12'h300: mstatus <= wrdata;
@@ -89,6 +103,10 @@ always_ff @(posedge clk, negedge rst_n)
                 12'h341: mepc <= wrdata;
                 12'h342: mcause <= wrdata;
                 12'h344: mip <= wrdata;
+                12'h7b0: dcsr <= wrdata;
+                12'h7b1: dpc <= wrdata;
+                12'h7b2: dscratch0 <= wrdata;
+                12'h7b3: dscratch1 <= wrdata;
             endcase
         end
     end

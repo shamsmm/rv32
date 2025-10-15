@@ -22,6 +22,9 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input bit haltreq = 1'b0,
     input bit resumereq = 1'b0,
     input bit resethaltreq = 1'b0,
+    output bit halted,
+
+
 
     // interrupts from PLIC or timer or external
     input bit irq_sw = 1'b0,
@@ -36,13 +39,11 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 
 privilege_t privilege;
 
-logic halted; // TODO: wire up to pipeline
-
 logic hazard = 1'b0;
 logic stall, stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
 logic flush, control_hazard; // if jump or branch was taken
 
-assign flush = control_hazard | interrupt | return_from_interrupt;
+assign flush = control_hazard | interrupt | return_from_interrupt | return_from_dbg;
 
 always_ff @(negedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -78,15 +79,18 @@ always_ff @(posedge clk, negedge rst_n) begin
 end
 
 
-always_comb
+always_comb begin
+    halted = hstate == HALTED;
+
     case(hstate)
         RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
-        NORMAL: next_hstate = haltreq ? HALTING : NORMAL;
-        HALTING: next_hstate = (halted) ? HALTED : NORMAL; // halt next after writing back (IF phase)
+        NORMAL: next_hstate = haltreq ? HALTING : (wb_dbg_step ? HALTED : NORMAL); // added to the FSM in the spec
+        HALTING: next_hstate = (1'b1) ? HALTED : NORMAL; // no need to wait for halting. (originally halt next after writing back (IF phase))
         HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
         RESUMING: next_hstate = NORMAL;
         default: next_hstate = NORMAL;
     endcase
+end
 
 //-----------------------------------------------------------------------------
 // Interrupts and Traps
@@ -94,11 +98,17 @@ always_comb
 
 logic sync_int;
 logic async_int;
+logic dbg_int;
+logic [8:6] dbg_cause;
 
-logic interrupt, return_from_interrupt;
+logic interrupt, return_from_interrupt, return_from_dbg = (hstate == RESUMING);
 
 logic [31:0] pc_to_store;
 mcause_t mcause_to_store;
+
+always_comb begin
+    dbg_cause = hstate == HALTING ? 3 : (wb_dbg_step ? 4 : 0);
+end
 
 always_ff @(negedge clk) begin
     return_from_interrupt = ma_wb.mret; // higher priority // only signal return_from_interrupt when really 
@@ -107,11 +117,12 @@ always_ff @(negedge clk) begin
     pc_to_store = 0;
     sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
     async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
+    dbg_int = hstate == HALTING | wb_dbg_step; // explicit debug halt request or single stepping not masked
     
     if (sync_int) begin
         pc_to_store = ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
         // instructuion_pc may be bubbled take ibus.addr always correct next fetch
-    end else if (async_int)
+    end else if (async_int | dbg_int)
         pc_to_store = ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
 
     if (mstatus.MIE) begin
@@ -196,6 +207,8 @@ always_ff @(posedge clk or negedge rst_n) begin
     end     
     else if (return_from_interrupt)
         ibus.addr <= mepc;
+    else if (return_from_dbg)
+        ibus.addr <= dpc;
     else if (interrupt)
         ibus.addr <= {mtvec.base, 2'b00};
     else if (control_hazard)
@@ -248,6 +261,9 @@ struct packed {
     logic [2:0] alu_funct3;
     logic [6:0] alu_funct7;
     tsize_e tsize;
+
+    // debug
+    logic step;
 } if_id;
 
 struct packed {
@@ -272,6 +288,7 @@ struct packed {
     logic wfi;
     logic ecall;
     logic mret;
+    logic step;
 } id_ex;
 
 struct packed {
@@ -304,6 +321,7 @@ struct packed {
     logic wfi;
     logic ecall;
     logic mret;
+    logic step;
 } ex_ma;
 
 struct packed {
@@ -328,7 +346,10 @@ struct packed {
     logic wfi;
     logic ecall;
     logic mret;
+    logic step;
 } ma_wb;
+
+logic wb_dbg_step;
 
 //-----------------------------------------------------------------------------
 // Interconnections and type casts
@@ -390,7 +411,7 @@ logic alu_out_c, alu_out_z, alu_out_n, alu_out_overflow;
 // Exposed CSRs
 //-----------------------------------------------------------------------------
 
-logic [31:0] mepc;
+logic [31:0] mepc, dpc;
 mstatus_t mstatus;
 mtvec_t mtvec;
 mcause_t mcause;
@@ -454,7 +475,7 @@ end
 // next clock edge
 always_comb begin
     // TODO: make sure instruction entering pipeline is ok
-    stall =  ma_wb.wfi && !interrupt; // WFI
+    stall =  (ma_wb.wfi && !interrupt) | (hstate != NORMAL); // WFI and Core Debug
 
     stall_if_id = stall;
     stall_id_ex = stall;
@@ -549,6 +570,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         if_id <= 0;
     else begin
         if_id <= '0; // zero out everything
+        if_id.step <= dcsr.step; // from debug csr
         if_id.instruction <= instruction; // combinational, preserve in stall
         if_id.pc <= instruction_pc;
         if (opcode[1:0] == 2'b11)
@@ -723,6 +745,7 @@ always_ff @(posedge clk or negedge rst_n)
         id_ex <= 0;
     else begin
         id_ex <= '0;
+        id_ex.step <= if_id.step;
         id_ex.instruction <= if_id.instruction;
         id_ex.pc <= if_id.pc;
         id_ex.alu_funct3 <= if_id.alu_funct3;
@@ -760,6 +783,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ex_ma <= 0;
     else begin
         ex_ma <= '0;
+        ex_ma.step <= id_ex.step;
         ex_ma.rf_r1 <= id_ex.rf_r1;
         ex_ma.rf_r2 <= id_ex.rf_r2;
         ex_ma.alu_out <= alu_out;
@@ -811,6 +835,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     //    ma_wb <= 0;
     else begin
         ma_wb <= '0;
+        ma_wb.step <= ex_ma.step;
         ma_wb.instruction <= ex_ma.instruction;
         ma_wb.pc <= ex_ma.pc;
         ma_wb.branch <= ex_ma.branch;
@@ -871,6 +896,14 @@ end
 // WB (input MA/WB)
 //-----------------------------------------------------------------------------
 
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        wb_dbg_step <= 0;
+    else begin
+        wb_dbg_step <= ma_wb.step;
+    end
+end
+
 // register file write
 always_comb
     case(ma_wb.instruction[6:2])
@@ -924,7 +957,7 @@ rf rf_u0(
 
 
 logic [11:0] csr_addr;
-
+dcsr_t dcsr;
 assign csr_addr = ma_wb.csr_wr ? ma_wb_itype_i.imm : id_ex_itype_i.imm;
 
 csr csr_u0(
@@ -948,6 +981,8 @@ csr csr_u0(
     .xTIP(irq_timer),
     .xSIP(irq_sw),
     .interrupt(interrupt),
+    .dbg(dbg_int),
+    .dbg_cause(dbg_cause),
     .return_from_interrupt(return_from_interrupt),
 
     // output EX/MA
@@ -960,7 +995,9 @@ csr csr_u0(
     .o_mip(mip),
     .o_mtvec(mtvec),
     .o_mcause(mcause),
-    .o_mepc(mepc)
+    .o_mepc(mepc),
+    .o_dpc(dpc),
+    .o_dcsr(dcsr)
 );
 
 //-----------------------------------------------------------------------------
