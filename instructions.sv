@@ -190,7 +190,7 @@ typedef struct packed {
     logic sbbusy;
     logic sbbusyerror;
     logic [28:23] _28_23;
-    logic sbversion; // tie to one
+    logic [31:29] sbversion; // tie to one
 } sbcs_t;
 
 typedef struct packed {

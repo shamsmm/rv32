@@ -22,7 +22,9 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input bit haltreq = 1'b0,
     input bit resumereq = 1'b0,
     input bit resethaltreq = 1'b0,
-    output bit halted,
+
+    output bit halted, // if not one of those then it is changing state
+    output bit running,
 
 
 
@@ -81,6 +83,7 @@ end
 
 always_comb begin
     halted = hstate == HALTED;
+    running = hstate == NORMAL;
 
     case(hstate)
         RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
@@ -101,7 +104,9 @@ logic async_int;
 logic dbg_int;
 logic [8:6] dbg_cause;
 
-logic interrupt, return_from_interrupt, return_from_dbg = (hstate == RESUMING);
+logic interrupt, return_from_interrupt, return_from_dbg;
+
+always_comb return_from_dbg = (hstate == RESUMING);
 
 logic [31:0] pc_to_store;
 mcause_t mcause_to_store;
