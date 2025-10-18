@@ -124,96 +124,98 @@ typedef struct packed {
     bit _zero_0;
 } mie_t;
 
+// Debug
 typedef struct packed {
-    bit [1:0] prv;
-    bit step;
-    bit nmip;
-    bit mprven;
-    bit _5;
-    bit [8:6] cause;
-    bit stoptime;
-    bit stopcount;
-    bit stepie;
-    bit ebreaku;
-    bit ebreaks;
-    bit _14;
-    bit ebreakm; // 
-    bit [27:16] _27_16;
     bit [31:28] xdebugver; // hardwire to 4
+    bit [27:16] _27_16;
+    bit ebreakm; //
+    bit _14;
+    bit ebreaks;
+    bit ebreaku;
+    bit stepie;
+    bit stopcount;
+    bit stoptime;
+    bit [8:6] cause;
+    bit _5;
+    bit mprven;
+    bit nmip;
+    bit step;
+    bit [1:0] prv;
 } dcsr_t;
 
 typedef enum logic [1:0] {M = 2'b11, S = 2'b01, U = 2'b00} privilege_t;
 
 typedef struct packed {
-    logic dmactive;
-    logic ndmreset;
-    logic clrresethaltreq;
-    logic setresethaltreq;
-    logic [5:4] _5_4;
-    logic [15:6] hartselhi; // should make all 0 except hartsel[0]
-    logic [25:16] hartsello;
-    logic hasel; // tie to zero
-    logic _27;
-    logic ackhavereset;
-    logic hartreset;
-    logic resumereq;
     logic haltreq;
+    logic resumereq;
+    logic hartreset;
+    logic ackhavereset;
+    logic _27;
+    logic hasel; // tie to zero
+    logic [25:16] hartsello;
+    logic [15:6] hartselhi; // should make all 0 except hartsel[0]
+    logic [5:4] _5_4;
+    logic setresethaltreq;
+    logic clrresethaltreq;
+    logic ndmreset;
+    logic dmactive;
 } dmcontrol_t;
 
 typedef struct packed {
-    logic [3:0] datacount; // hard wire to any of 1-12 (I implement 3 registers)
-    logic [7:4] _7_4;
-    logic [10:8] cmderr;
-    logic _11;
-    logic busy;
-    logic [23:13] _23_13;
+    logic [31:29] _31_29;
     logic [28:24] progbufsize; // hardwire to 0
+    logic [23:13] _23_13;
+    logic busy;
+    logic _11;
+    logic [10:8] cmderr;
+    logic [7:4] _7_4;
+    logic [3:0] datacount; // hard wire to any of 1-12 (I implement 3 registers)
 } abstractcs_t;
 
 typedef struct packed {
-    logic [23:0] control;
     logic [31:24] cmdtype;
+    logic [23:0] control;
 } command_t;
 
 typedef struct packed {
-    logic sbaccess8;
-    logic sbaccess16;
-    logic sbaccess32; // only supported, rest 0s
-    logic sbaccess64;
-    logic sbaccess128;
-    logic [11:5] sbasize; // 32
-    logic [14:12] sberror;
-    logic sbreadondata;
-    logic sbautoincrement;
-    logic [19:17] sbaccess;
-    logic sbreadonaddr;
-    logic sbbusy;
-    logic sbbusyerror;
-    logic [28:23] _28_23;
     logic [31:29] sbversion; // tie to one
+    logic [28:23] _28_23;
+    logic sbbusyerror;
+    logic sbbusy;
+    logic sbreadonaddr;
+    logic [19:17] sbaccess;
+    logic sbautoincrement;
+    logic sbreadondata;
+    logic [14:12] sberror;
+    logic [11:5] sbasize; // 32
+    logic sbaccess128;
+    logic sbaccess64;
+    logic sbaccess32; // only supported, rest 0s
+    logic sbaccess16;
+    logic sbaccess8;
 } sbcs_t;
 
 typedef struct packed {
-    logic [3:0] version;
-    logic confstrptrvalid;
-    logic hasresethaltreq;
-    logic authbusy;
-    logic authenticated;
-    logic anyhalted;
-    logic allhalted;
-    logic anyrunning;
-    logic allrunning;
-    logic anyunavail;
-    logic allunavail;
-    logic anynonexistent;
-    logic allnonexistent;
-    logic anyresumeack;
-    logic allresumeack;
-    logic anyhavereset;
-    logic allhavereset;
-    logic [21:20] _21_20;
-    logic impebreak;
     logic [31:23] _31_23;
+    logic impebreak;
+    logic [21:20] _21_20;
+    logic allhavereset;
+    logic anyhavereset;
+    logic allresumeack;
+    logic anyresumeack;
+    logic allnonexistent;
+    logic anynonexistent;
+    logic allunavail;
+    logic anyunavail;
+    logic allrunning;
+    logic anyrunning;
+    logic allhalted;
+    logic anyhalted;
+    logic authenticated;
+    logic authbusy;
+    logic hasresethaltreq;
+    logic confstrptrvalid;
+    logic [3:0] version;
 } dmstatus_t;
 
 endpackage
