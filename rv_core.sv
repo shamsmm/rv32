@@ -26,7 +26,8 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     output bit halted, // if not one of those then it is changing state
     output bit running,
 
-
+    input access_register_command_control_t dbg_arcc,
+    output logic [31:0] dbg_regout,
 
     // interrupts from PLIC or timer or external
     input bit irq_sw = 1'b0,
@@ -84,7 +85,8 @@ end
 always_comb begin
     halted = hstate == HALTED;
     running = hstate == NORMAL;
-
+    dbg_regout = rf_r1;
+    
     case(hstate)
         RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
         NORMAL: next_hstate = haltreq ? HALTING : (wb_dbg_step ? HALTED : NORMAL); // added to the FSM in the spec
@@ -943,12 +945,12 @@ rf rf_u0(
     .rst_n(rst_n),
 
     // input IF/ID
-    .rs1(if_id.rf_rs1),
+    .rs1( halted ? (dbg_arcc.regno & 16'h7FFF) : if_id.rf_rs1),
     .rs2(if_id.rf_rs2),
-    .rd(ma_wb.rf_rd),
+    .rd( halted ? (dbg_arcc.regno & 16'h7FFF) : ma_wb.rf_rd),
 
     // input MA/WB
-    .wr(ma_wb.rf_wr), // state changing
+    .wr(halted ? (dbg_arcc.transfer & dbg_arcc.write) : ma_wb.rf_wr), // state changing
     .wrdata(rf_wrdata),
 
     // output ID/EX

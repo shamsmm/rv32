@@ -178,6 +178,16 @@ typedef struct packed {
 } command_t;
 
 typedef struct packed {
+    logic _23;
+    logic [22:20] aarsize;
+    logic aarpostincrement;
+    logic postexec;
+    logic transfer;
+    logic write;
+    logic regno;
+} access_register_command_control_t;
+
+typedef struct packed {
     logic [31:29] sbversion; // tie to one
     logic [28:23] _28_23;
     logic sbbusyerror;
@@ -217,5 +227,14 @@ typedef struct packed {
     logic confstrptrvalid;
     logic [3:0] version;
 } dmstatus_t;
+
+typedef struct packed {
+    logic [31:24] _31_24;
+    logic [23:20] nscratch;
+    logic [19:17] _19_17;
+    logic dataaccess;
+    logic [15:12] datasize;
+    logic [11:0] dataaddr;
+} hartinfo_t;
 
 endpackage
