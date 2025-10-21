@@ -27,6 +27,7 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     output bit running,
 
     input access_register_command_control_t dbg_arcc,
+    input logic [31:0] dbg_rwrdata,
     output logic [31:0] dbg_regout,
 
     // interrupts from PLIC or timer or external
@@ -951,7 +952,7 @@ rf rf_u0(
 
     // input MA/WB
     .wr(halted ? (dbg_arcc.transfer & dbg_arcc.write) : ma_wb.rf_wr), // state changing
-    .wrdata(rf_wrdata),
+    .wrdata(halted ? dbg_rwrdata : rf_wrdata),
 
     // output ID/EX
     .r1(rf_r1),
