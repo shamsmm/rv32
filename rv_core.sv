@@ -47,7 +47,7 @@ logic hazard = 1'b0;
 logic stall, stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
 logic flush, control_hazard; // if jump or branch was taken
 
-assign flush = control_hazard | interrupt | return_from_interrupt | return_from_dbg;
+assign flush = control_hazard | interrupt | return_from_interrupt | dbg_int | return_from_dbg;
 
 always_ff @(negedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -119,36 +119,36 @@ always_comb begin
 end
 
 always_ff @(negedge clk) begin
-    return_from_interrupt = ma_wb.mret; // higher priority // only signal return_from_interrupt when really 
-    interrupt = 0;
-    mcause_to_store = 0;
-    pc_to_store = 0;
-    sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
-    async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
-    dbg_int = hstate == HALTING | wb_dbg_step; // explicit debug halt request or single stepping not masked
+    return_from_interrupt <= ma_wb.mret; // higher priority // only signal return_from_interrupt when really 
+    interrupt <= 0;
+    mcause_to_store <= 0;
+    pc_to_store <= 0;
+    sync_int <=  ma_wb.ecall | ma_wb.illegal_instruction;
+    async_int <= (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
+    dbg_int <= hstate == HALTING | wb_dbg_step; // explicit debug halt request or single stepping not masked
     
     if (sync_int) begin
-        pc_to_store = ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
+        pc_to_store <= ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
         // instructuion_pc may be bubbled take ibus.addr always correct next fetch
     end else if (async_int | dbg_int)
-        pc_to_store = ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
+        pc_to_store <= ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
 
     if (mstatus.MIE) begin
         if (sync_int) begin
-            interrupt = 1'b1;
-            mcause_to_store.interr = 0;
+            interrupt <= 1'b1;
+            mcause_to_store.interr <= 0;
 
-            mcause_to_store.code = ma_wb.ecall ? 11 : 2; // 11 and 2 from the spec
+            mcause_to_store.code <= ma_wb.ecall ? 11 : 2; // 11 and 2 from the spec
         end else if (async_int) begin
-            interrupt = 1'b1;
-            mcause_to_store.interr = 1;
+            interrupt <= 1'b1;
+            mcause_to_store.interr <= 1;
 
             if ((irq_ext | mip.MEIP) && mie.MEIE)
-                mcause_to_store.code = 11;
+                mcause_to_store.code <= 11;
             else if ((irq_timer | mip.MTIP) && mie.MTIE)
-                mcause_to_store.code = 7;
+                mcause_to_store.code <= 7;
             else if ((irq_sw | mip.MSIP) && mie.MSIE)    
-                mcause_to_store.code = 3;
+                mcause_to_store.code <= 3;
         end
     end
 end
@@ -192,12 +192,13 @@ end
 logic start_dbus_transaction;
 assign start_dbus_transaction = ex_ma.mem_wr | ex_ma.mem_rd;
 
+// this is just to keep track of bus state. when halted forget about bus state
 always_comb begin
     case(dbus_state)
-        IDLE: next_dbus_state =  start_dbus_transaction ? START : IDLE;
-        START: next_dbus_state = dbus.bdone ? DELAY : ONGOING;
+        IDLE: next_dbus_state =  start_dbus_transaction && !haltreq ? START : IDLE;
+        START: next_dbus_state = haltreq ? IDLE : (dbus.bdone ? DELAY : ONGOING);
         DELAY: next_dbus_state = IDLE;
-        ONGOING: next_dbus_state = dbus.bdone ? IDLE : ONGOING;
+        ONGOING: next_dbus_state = haltreq ? IDLE : (dbus.bdone ? IDLE : ONGOING);
     endcase
 end
 
