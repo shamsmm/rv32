@@ -184,8 +184,18 @@ typedef struct packed {
     logic postexec;
     logic transfer;
     logic write;
-    logic regno;
+    logic [15:0] regno;
 } access_register_command_control_t;
+
+typedef struct packed {
+    logic aamvirtual; // must fail if virtual
+    logic [22:20] aamsize;
+    logic aampostincrement;
+    logic [18:17] _18_17;
+    logic write;
+    logic [15:14] _target_specific;
+    logic [13:0] _13_0;
+} access_memory_command_control_t;
 
 typedef struct packed {
     logic [31:29] sbversion; // tie to one

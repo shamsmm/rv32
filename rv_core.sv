@@ -86,7 +86,7 @@ end
 always_comb begin
     halted = hstate == HALTED;
     running = hstate == NORMAL;
-    dbg_regout = rf_r1;
+    dbg_regout = dbg_arcc.regno[15] ? rf_r1 : csr_read;
     
     case(hstate)
         RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
@@ -946,12 +946,12 @@ rf rf_u0(
     .rst_n(rst_n),
 
     // input IF/ID
-    .rs1( halted ? (dbg_arcc.regno & 16'h7FFF) : if_id.rf_rs1),
+    .rs1( halted ? dbg_arcc.regno[4:0] : if_id.rf_rs1),
     .rs2(if_id.rf_rs2),
-    .rd( halted ? (dbg_arcc.regno & 16'h7FFF) : ma_wb.rf_rd),
+    .rd( halted ? dbg_arcc.regno[4:0] : ma_wb.rf_rd),
 
     // input MA/WB
-    .wr(halted ? (dbg_arcc.transfer & dbg_arcc.write) : ma_wb.rf_wr), // state changing
+    .wr(halted ? (dbg_arcc.transfer & dbg_arcc.write & dbg_arcc.regno[15]) : ma_wb.rf_wr), // state changing
     .wrdata(halted ? dbg_rwrdata : rf_wrdata),
 
     // output ID/EX
@@ -973,13 +973,13 @@ csr csr_u0(
     .rst_n(rst_n),
 
     // input EX/MA
-    .wr(ma_wb.csr_wr),
+    .wr(halted ? (dbg_arcc.transfer & dbg_arcc.write & ~dbg_arcc.regno[15]) : ma_wb.csr_wr),
 
     // input ID/EX
-    .address(csr_addr),
+    .address(halted ? (dbg_arcc.regno[11:0]) : csr_addr),
 
     // input MA/WB
-    .wrdata(ma_wb.csr_wrdata),
+    .wrdata(halted ? dbg_rwrdata : ma_wb.csr_wrdata),
 
     // interrupt store and restoring
     // TODO: privilege escaltion and restore
