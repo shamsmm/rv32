@@ -40,10 +40,13 @@ logic [31:0] mvendorid, marchid, mhartid, mepc, dpc, dscratch0, dscratch1;
 
 mip_t mip;
 mie_t mie;
+misa_t misa;
 mstatus_t mstatus;
 mtvec_t mtvec;
 mcause_t mcause;
 dcsr_t dcsr;
+
+always_comb misa = {2'b01, 4'b0000, 26'b00000000000000000100000000}; // only RV32I implemented
 
 always_comb begin
     case(address)
@@ -51,6 +54,7 @@ always_comb begin
         12'hF12: out = marchid;
         12'hF14: out = mhartid;
         12'h300: out = mstatus;
+        12'h301: out = misa;
         12'h304: out = mie;
         12'h305: out = mtvec;
         12'h341: out = mepc;

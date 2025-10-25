@@ -247,4 +247,10 @@ typedef struct packed {
     logic [11:0] dataaddr;
 } hartinfo_t;
 
+typedef struct packed {
+    logic [32-1:32-2] mxl;
+    logic [32-3:26] _;
+    logic [25:0] extensions;
+} misa_t;
+
 endpackage
