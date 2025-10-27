@@ -134,11 +134,14 @@ always_ff @(negedge clk) begin
     mcause_to_store <= 0;
     pc_to_store <= 0;
     
-    if (sync_int) begin
+    if (wb_dbg_step) // dbg_int is wb_dbg_step | halting
+        pc_to_store <= ibus.addr + 4; // gauranteed as there is only one instruction in pipeline, instructions are bubbled
+        // TODO: why synchronous interrupt does not need + 4 ?
+    else if (dbg_int | async_int)
+        pc_to_store <= ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
+    else if (sync_int)
         pc_to_store <= ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
         // instructuion_pc may be bubbled take ibus.addr always correct next fetch
-    end else if (async_int | dbg_int)
-        pc_to_store <= ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
 
     if (mstatus.MIE) begin
         if (sync_int) begin
@@ -507,6 +510,9 @@ always_comb begin
     // stall if the pipeline have any SYSTEM instruction (atomic and effects CSR module) TODO: implement data forwarding or more fine stalls (hard)
     // fallback to multicycle mode
     if (if_id.instruction[6:2] == SYSTEM || id_ex.instruction[6:2] == SYSTEM || ex_ma.instruction[6:2] == SYSTEM || ma_wb.instruction[6:2] == SYSTEM)
+        bubble_instruction = 1'b1;    
+
+    if (if_id.step || id_ex.step || ex_ma.step || ma_wb.step)
         bubble_instruction = 1'b1;    
 
     // stall if pipeline has an illegal instruction
