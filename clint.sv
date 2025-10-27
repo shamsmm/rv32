@@ -2,12 +2,13 @@ module clint (
     slave_bus_if.slave bus,
     input bit clk,
     input bit rst_n,
-    output bit irq_sw = 1'b0,
+    output bit irq_sw,
     output bit irq_timer
 );
     
 logic [31:0] mtime, mtimecmp;
 
+assign irq_sw = 1'b0;
 assign irq_timer = mtime >= mtimecmp;
 
 always_comb begin

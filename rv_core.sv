@@ -43,6 +43,8 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
 
 privilege_t privilege;
 
+assign privilege = M;
+
 logic hazard = 1'b0;
 logic stall, stall_if_id, stall_id_ex, stall_ex_ma, bubble_instruction, bubble_if_id, bubble_id_ex, bubble_ex_ma, bubble_ma_wb; // due to hazards or memory delay
 logic flush, control_hazard; // if jump or branch was taken
@@ -173,6 +175,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         case(ibus_state)
             ONGOING: ibus_state <= ibus.bdone ? ((flush || (!bubble_instruction && !stall_if_id)) ? ONGOING : IDLE) : ONGOING;
             IDLE: ibus_state <= (flush || (!bubble_instruction && !stall_if_id)) ? ONGOING : IDLE;
+            default:;
         endcase
 end
 
@@ -822,6 +825,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                 3'b101: ex_ma.branch <= !(alu_out_n ^ alu_out_overflow); // BGE
                 3'b110: ex_ma.branch <= !alu_out_c; // BLTU
                 3'b111: ex_ma.branch <= alu_out_c; // BGEU
+                default: ex_ma.branch <= 0;
             endcase
 
         case(id_ex.instruction[6:2])
@@ -882,6 +886,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                 `CSRRCI: begin
                     ma_wb.csr_wrdata <= ex_ma.csr_read & ~({27'b0, ex_ma_itype_i.rs1});
                 end
+                default:;
             endcase
 
         case(ex_ma.instruction[6:2])

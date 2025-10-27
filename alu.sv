@@ -37,6 +37,7 @@ always_comb begin
             case(funct3)
                 3'b000: {carry, out} = 33'(in1) - in2; // SUB
                 3'b101: out = !use_shamt ? in1 >>> in2 : in1 >>> shamt; // SRA/SRAI
+                default:;
             endcase
         end
         default: begin

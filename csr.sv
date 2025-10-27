@@ -34,6 +34,7 @@ always_comb begin
     o_mtvec = mtvec;
     o_mepc = mepc;
     o_dpc = dpc;
+    o_dcsr = dcsr;
 end
 
 logic [31:0] mvendorid, marchid, mhartid, mepc, dpc, dscratch0, dscratch1;
@@ -86,6 +87,7 @@ always_ff @(posedge clk, negedge rst_n)
                 mip.MTIP <= mip.MTIP | xTIP;
                 mip.MSIP <= mip.MSIP | xSIP;
             end
+            default:;
         endcase
 
         if (return_from_interrupt) begin
@@ -111,6 +113,7 @@ always_ff @(posedge clk, negedge rst_n)
                 12'h7b1: dpc <= wrdata;
                 12'h7b2: dscratch0 <= wrdata;
                 12'h7b3: dscratch1 <= wrdata;
+                default:;
             endcase
         end
     end
