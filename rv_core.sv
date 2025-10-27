@@ -23,8 +23,10 @@ module  rv_core #(parameter logic [31:0] INITIAL_PC) (
     input bit resumereq = 1'b0,
     input bit resethaltreq = 1'b0,
 
+    output bit resumeack,
     output bit halted, // if not one of those then it is changing state
     output bit running,
+    output bit reset,
 
     input access_register_command_control_t dbg_arcc,
     input logic [31:0] dbg_rwrdata,
@@ -88,6 +90,8 @@ end
 always_comb begin
     halted = hstate == HALTED;
     running = hstate == NORMAL;
+    resumeack = hstate == RESUMING;
+    reset = hstate == RESET;
     dbg_regout = dbg_arcc.regno[15] ? rf_r1 : csr_read;
     
     case(hstate)
@@ -911,12 +915,8 @@ end
 // WB (input MA/WB)
 //-----------------------------------------------------------------------------
 
-always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
-        wb_dbg_step <= 0;
-    else begin
-        wb_dbg_step <= ma_wb.step;
-    end
+always_comb begin
+    wb_dbg_step = ma_wb.step;
 end
 
 // register file write
