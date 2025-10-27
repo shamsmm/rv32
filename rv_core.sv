@@ -116,6 +116,10 @@ mcause_t mcause_to_store;
 
 always_comb begin
     dbg_cause = hstate == HALTING ? 3 : (wb_dbg_step ? 4 : 0);
+
+    sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
+    async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
+    dbg_int = hstate == HALTING | wb_dbg_step; // explicit debug halt request or single stepping not masked
 end
 
 always_ff @(negedge clk) begin
@@ -123,9 +127,6 @@ always_ff @(negedge clk) begin
     interrupt <= 0;
     mcause_to_store <= 0;
     pc_to_store <= 0;
-    sync_int <=  ma_wb.ecall | ma_wb.illegal_instruction;
-    async_int <= (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
-    dbg_int <= hstate == HALTING | wb_dbg_step; // explicit debug halt request or single stepping not masked
     
     if (sync_int) begin
         pc_to_store <= ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
