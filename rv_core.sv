@@ -95,7 +95,7 @@ always_comb begin
     dbg_regout = dbg_arcc.regno[15] ? rf_r1 : csr_read;
     
     case(hstate)
-        RESET: next_hstate = resethaltreq ? HALTED : NORMAL;
+        RESET: next_hstate = (resethaltreq | haltreq) ? HALTED : NORMAL;
         NORMAL: next_hstate = haltreq ? HALTING : (wb_dbg_step ? HALTED : NORMAL); // added to the FSM in the spec
         HALTING: next_hstate = (1'b1) ? HALTED : NORMAL; // no need to wait for halting. (originally halt next after writing back (IF phase))
         HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
@@ -121,11 +121,11 @@ logic [31:0] pc_to_store;
 mcause_t mcause_to_store;
 
 always_comb begin
-    dbg_cause = hstate == HALTING ? 3 : (wb_dbg_step ? 4 : 0);
+    dbg_cause = hstate == HALTING ? 3 : (wb_dbg_step ? 4 : (ma_wb.ebreak ? 1 : 0));
 
     sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
     async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
-    dbg_int = hstate == HALTING | wb_dbg_step; // explicit debug halt request or single stepping not masked
+    dbg_int = hstate == HALTED | hstate == HALTING | wb_dbg_step | ma_wb.ebreak; // explicit debug halt request or single stepping not masked
 end
 
 always_ff @(negedge clk) begin
@@ -134,14 +134,11 @@ always_ff @(negedge clk) begin
     mcause_to_store <= 0;
     pc_to_store <= 0;
     
-    if (wb_dbg_step) // dbg_int is wb_dbg_step | halting
+    if (wb_dbg_step | sync_int | ma_wb.ebreak) // dbg_int is wb_dbg_step | halting
         pc_to_store <= ibus.addr + 4; // gauranteed as there is only one instruction in pipeline, instructions are bubbled
         // TODO: why synchronous interrupt does not need + 4 ?
     else if (dbg_int | async_int)
         pc_to_store <= ma_wb.pc != 0 ? ma_wb.pc : (ex_ma.pc != 0 ? ex_ma.pc : (id_ex.pc != 0 ? id_ex.pc : (if_id.pc != 0 ? if_id.pc : ibus.addr)));
-    else if (sync_int)
-        pc_to_store <= ibus.addr; // gauranteed as ECALL or Illegal Instrcution are only one in pipeline
-        // instructuion_pc may be bubbled take ibus.addr always correct next fetch
 
     if (mstatus.MIE) begin
         if (sync_int) begin
@@ -266,6 +263,7 @@ struct packed {
     logic illegal_instruction;
     logic wfi;
     logic ecall;
+    logic ebreak;
     logic mret;
 
     // intrinsic
@@ -307,6 +305,7 @@ struct packed {
     logic illegal_instruction;
     logic wfi;
     logic ecall;
+    logic ebreak;
     logic mret;
     logic step;
 } id_ex;
@@ -340,6 +339,7 @@ struct packed {
     logic illegal_instruction;
     logic wfi;
     logic ecall;
+    logic ebreak;
     logic mret;
     logic step;
 } ex_ma;
@@ -365,6 +365,7 @@ struct packed {
     logic illegal_instruction;
     logic wfi;
     logic ecall;
+    logic ebreak;
     logic mret;
     logic step;
 } ma_wb;
@@ -733,6 +734,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                                         if_id.ecall <= 1'b1;
                                     end
                                     12'b000000000001: begin // EBREAK
+                                        if_id.ebreak <= 1'b1;
                                     end
                                     12'b000100000010: begin // SRET
                                     end
@@ -786,6 +788,7 @@ always_ff @(posedge clk or negedge rst_n)
         id_ex.illegal_instruction <= if_id.illegal_instruction;
         id_ex.wfi <= if_id.wfi;
         id_ex.ecall <= if_id.ecall;
+        id_ex.ebreak <= if_id.ebreak;
         id_ex.mret <= if_id.mret;
     end
 
@@ -825,6 +828,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ex_ma.illegal_instruction <= id_ex.illegal_instruction;
         ex_ma.wfi <= id_ex.wfi;
         ex_ma.ecall <= id_ex.ecall;
+        ex_ma.ebreak <= id_ex.ebreak;
         ex_ma.mret <= id_ex.mret;
 
         if (id_ex.instruction[6:2] == BRANCH)
@@ -874,6 +878,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         ma_wb.illegal_instruction <= ex_ma.illegal_instruction;
         ma_wb.wfi <= ex_ma.wfi;
         ma_wb.ecall <= ex_ma.ecall;
+        ma_wb.ebreak <= ex_ma.ebreak;
         ma_wb.mret <= ex_ma.mret;
 
         if(ex_ma.instruction[6:2] == SYSTEM)
