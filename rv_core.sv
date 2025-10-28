@@ -96,7 +96,7 @@ always_comb begin
     
     case(hstate)
         RESET: next_hstate = (resethaltreq | haltreq) ? HALTED : NORMAL;
-        NORMAL: next_hstate = haltreq ? HALTING : (wb_dbg_step ? HALTED : NORMAL); // added to the FSM in the spec
+        NORMAL: next_hstate = haltreq ? HALTING : ((wb_dbg_step | ma_wb.ebreak) ? HALTED : NORMAL); // added to the FSM in the spec
         HALTING: next_hstate = (1'b1) ? HALTED : NORMAL; // no need to wait for halting. (originally halt next after writing back (IF phase))
         HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
         RESUMING: next_hstate = NORMAL;
