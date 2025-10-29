@@ -45,11 +45,13 @@ misa_t misa;
 mstatus_t mstatus;
 mtvec_t mtvec;
 mcause_t mcause;
-dcsr_t dcsr;
+dcsr_t dcsr, wrdata_dcsr;
 
 always_comb misa = {2'b01, 4'b0000, 26'b00000000000000000100000000}; // only RV32I implemented
 
 always_comb begin
+    wrdata_dcsr = dcsr_t'(wrdata);
+
     case(address)
         12'hF11: out = mvendorid;
         12'hF12: out = marchid;
@@ -61,6 +63,7 @@ always_comb begin
         12'h341: out = mepc;
         12'h342: out = mcause;
         12'h344: out = mip;
+        12'h7a0: out = 0; // always
         12'h7b0: out = dcsr;
         12'h7b1: out = dpc;
         12'h7b2: out = dscratch0;
@@ -74,6 +77,7 @@ always_ff @(posedge clk, negedge rst_n)
         mvendorid <= MVENDORID;
         marchid <= MARCHID;
         mhartid <= MHARTID;
+        dcsr <= {4'd4, 28'd0};
         mepc <= 0;
         mip <= 0;
         mie <= 0;
@@ -101,6 +105,7 @@ always_ff @(posedge clk, negedge rst_n)
         end else if (dbg) begin
             dpc <= pc;
             dcsr.cause <= dbg_cause;
+            dcsr.prv <= privilege;
         end else if (wr) begin
             case(address)
                 12'h300: mstatus <= wrdata;
@@ -109,7 +114,19 @@ always_ff @(posedge clk, negedge rst_n)
                 12'h341: mepc <= wrdata;
                 12'h342: mcause <= wrdata;
                 12'h344: mip <= wrdata;
-                12'h7b0: dcsr <= wrdata;
+                12'h7b0: begin
+                    dcsr.ebreakm <= wrdata_dcsr.ebreakm;
+                    dcsr.ebreaks <= wrdata_dcsr.ebreaks;
+                    dcsr.ebreaku <= wrdata_dcsr.ebreaku;
+                    // stepie always 0
+                    // stopcount always 0
+                    // stoptime always 0
+                    // cause set previuosly
+                    // mprven always 0
+                    // nmip waiting
+                    dcsr.step <= wrdata_dcsr.step;
+                    dcsr.prv <= wrdata_dcsr.prv;
+                end
                 12'h7b1: dpc <= wrdata;
                 12'h7b2: dscratch0 <= wrdata;
                 12'h7b3: dscratch1 <= wrdata;

@@ -119,9 +119,18 @@ always_comb return_from_dbg = (hstate == RESUMING);
 
 logic [31:0] pc_to_store;
 mcause_t mcause_to_store;
+logic trigger = 0;
 
 always_comb begin
-    dbg_cause = hstate == HALTING ? 3 : (wb_dbg_step ? 4 : (ma_wb.ebreak ? 1 : 0));
+    dbg_cause = 0;
+    if (trigger)
+        dbg_cause = 2;
+    else if (ma_wb.ebreak)
+        dbg_cause = 1;
+    else if (hstate == HALTING | hstate == HALTED)
+        dbg_cause = 3;
+    else if (wb_dbg_step)
+        dbg_cause = 4;
 
     sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
     async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
@@ -496,7 +505,7 @@ end
 // next clock edge
 always_comb begin
     // TODO: make sure instruction entering pipeline is ok
-    stall =  (ma_wb.wfi && !interrupt) | (hstate != NORMAL); // WFI and Core Debug
+    stall =  (ma_wb.wfi && !interrupt) | dbg_int | (hstate != NORMAL); // WFI and Core Debug
 
     stall_if_id = stall;
     stall_id_ex = stall;
