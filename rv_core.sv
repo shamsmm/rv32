@@ -95,7 +95,7 @@ always_comb begin
     dbg_regout = dbg_arcc.regno[15] ? rf_r1 : csr_read;
     
     case(hstate)
-        RESET: next_hstate = (resethaltreq | haltreq) ? HALTED : NORMAL;
+        RESET: next_hstate = (resethaltreq | haltreq) ? HALTING : NORMAL;
         NORMAL: next_hstate = haltreq ? HALTING : ((wb_dbg_step | ma_wb.ebreak) ? HALTED : NORMAL); // added to the FSM in the spec
         HALTING: next_hstate = (1'b1) ? HALTED : NORMAL; // no need to wait for halting. (originally halt next after writing back (IF phase))
         HALTED: next_hstate = resumereq ? RESUMING : HALTED; // for fsm to be like DM spec
@@ -134,7 +134,7 @@ always_comb begin
 
     sync_int =  ma_wb.ecall | ma_wb.illegal_instruction;
     async_int = (irq_ext | mip.MEIP) | (irq_timer | mip.MTIP) | (irq_sw | mip.MSIP);
-    dbg_int = hstate == HALTED | hstate == HALTING | wb_dbg_step | ma_wb.ebreak; // explicit debug halt request or single stepping not masked
+    dbg_int = hstate == HALTING | wb_dbg_step | ma_wb.ebreak; // explicit debug halt request or single stepping not masked
 end
 
 always_ff @(negedge clk) begin
